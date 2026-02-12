@@ -123,10 +123,11 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 			ownedNames := make(map[string]bool)
 			for _, d := range ownedDevices {
 				ownedNames[d.Name] = true
+				ownedNames[d.Identifier] = true
 			}
 			var filtered []forge.Persona
 			for _, c := range candidates {
-				if ownedNames[c.Name] {
+				if ownedNames[c.Name] || ownedNames[c.Slug] {
 					filtered = append(filtered, c)
 				}
 			}

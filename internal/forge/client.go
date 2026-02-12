@@ -13,7 +13,9 @@ import (
 
 type Persona struct {
 	ID           string   `json:"id"`
+	Slug         string   `json:"slug"`
 	Name         string   `json:"name"`
+	Type         string   `json:"type"`
 	Capabilities []string `json:"capabilities"`
 }
 
@@ -40,13 +42,21 @@ func NewHTTPClient(baseURL string) *HTTPClient {
 	}
 }
 
-type personaResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Sections []struct {
-		ID      string `json:"id"`
-		Content string `json:"content"`
-	} `json:"sections"`
+type promptListItem struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type versionResponse struct {
+	Version int `json:"version"`
+	Content struct {
+		Sections []struct {
+			ID      string `json:"id"`
+			Content string `json:"content"`
+		} `json:"sections"`
+	} `json:"content"`
 }
 
 func (c *HTTPClient) ListPersonas(ctx context.Context) ([]Persona, error) {
@@ -73,6 +83,7 @@ func (c *HTTPClient) ListPersonas(ctx context.Context) ([]Persona, error) {
 }
 
 func (c *HTTPClient) fetchPersonas(ctx context.Context) ([]Persona, error) {
+	// Get all prompts
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/prompts", nil)
 	if err != nil {
 		return nil, err
@@ -90,22 +101,57 @@ func (c *HTTPClient) fetchPersonas(ctx context.Context) ([]Persona, error) {
 		return nil, fmt.Errorf("promptforge: %d %s", resp.StatusCode, string(body))
 	}
 
-	var raw []personaResponse
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var items []promptListItem
+	if err := json.Unmarshal(body, &items); err != nil {
 		return nil, err
 	}
 
+	// For each persona, fetch latest version to get capabilities
 	var personas []Persona
-	for _, r := range raw {
-		p := Persona{ID: r.ID, Name: r.Name}
-		for _, s := range r.Sections {
-			if s.ID == "capabilities" {
-				p.Capabilities = ParseCapabilities(s.Content)
-			}
+	for _, item := range items {
+		if item.Type != "persona" {
+			continue
 		}
+		p := Persona{ID: item.ID, Slug: item.Slug, Name: item.Name, Type: item.Type}
+
+		// Fetch latest version (try version 2 first since we added capabilities as v2, fallback to 1)
+		caps := c.fetchCapabilities(ctx, item.Slug)
+		p.Capabilities = caps
 		personas = append(personas, p)
 	}
 	return personas, nil
+}
+
+func (c *HTTPClient) fetchCapabilities(ctx context.Context, slug string) []string {
+	// Try versions in descending order (most recent first)
+	for v := 10; v >= 1; v-- {
+		url := fmt.Sprintf("%s/api/v1/prompts/%s/versions/%d", c.baseURL, slug, v)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			continue
+		}
+
+		var ver versionResponse
+		if err := json.Unmarshal(body, &ver); err != nil {
+			continue
+		}
+
+		for _, s := range ver.Content.Sections {
+			if s.ID == "capabilities" {
+				return ParseCapabilities(s.Content)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *HTTPClient) GetAgentsByCapability(ctx context.Context, scope string) ([]Persona, error) {
