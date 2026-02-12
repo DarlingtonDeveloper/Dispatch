@@ -160,7 +160,7 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 		if b.IsDrained(c.Name) {
 			continue
 		}
-		state, err := b.warren.GetAgentState(ctx, c.Name)
+		state, err := b.warren.GetAgentState(ctx, c.Slug)
 		if err != nil {
 			b.logger.Warn("failed to get agent state", "agent", c.Name, "error", err)
 			continue
@@ -183,7 +183,7 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	winner := scoredCandidates[0]
 
 	// Wake if sleeping
-	state, _ := b.warren.GetAgentState(ctx, winner.persona.Name)
+	state, _ := b.warren.GetAgentState(ctx, winner.persona.Slug)
 	if state != nil && state.Status == "sleeping" {
 		if err := b.warren.WakeAgent(ctx, winner.persona.Name); err != nil {
 			b.logger.Warn("failed to wake agent", "agent", winner.persona.Name, "error", err)
@@ -194,7 +194,7 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 
 	now := time.Now()
 	task.Status = store.StatusAssigned
-	task.Assignee = winner.persona.Name
+	task.Assignee = winner.persona.Slug
 	task.AssignedAt = &now
 
 	if err := b.store.UpdateTask(ctx, task); err != nil {
