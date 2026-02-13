@@ -69,11 +69,12 @@ REQUEST → PENDING → ASSIGNED → RUNNING → COMPLETED
 ## Assignment Algorithm
 
 1. Query PromptForge for agents with matching capability tags
-2. Query Warren for each candidate's availability
-3. Score: `capability_match × availability_multiplier × priority_weight`
+2. **Owner filtering** (if `owner_filter_enabled: true`): query Alexandria for devices owned by the task's owner and restrict candidates to those agents. When disabled, any capable agent can receive work regardless of ownership.
+3. Query Warren for each candidate's availability
+4. Score: `capability_match × availability_multiplier × priority_weight`
    - Ready: ×1.0 | Sleeping: ×0.8 | Busy (under limit): ×0.5 | Degraded: ×0
-4. Assign to highest-scoring candidate (wake if sleeping)
-5. Start timeout timer
+5. Assign to highest-scoring candidate (wake if sleeping)
+6. Start timeout timer
 
 ## Configuration
 
@@ -101,6 +102,7 @@ assignment:
   wake_timeout_ms: 30000
   default_timeout_ms: 300000
   max_concurrent_per_agent: 3
+  owner_filter_enabled: true    # set false to allow cross-owner task assignment
 
 logging:
   level: "info"
@@ -120,6 +122,7 @@ logging:
 | `DISPATCH_WARREN_TOKEN` | `warren.token` |
 | `DISPATCH_FORGE_URL` | `promptforge.url` |
 | `DISPATCH_TICK_INTERVAL_MS` | `assignment.tick_interval_ms` |
+| `DISPATCH_OWNER_FILTER_ENABLED` | `assignment.owner_filter_enabled` |
 | `DISPATCH_LOG_LEVEL` | `logging.level` |
 
 ## Deployment

@@ -177,6 +177,7 @@ func testConfig() *config.Config {
 			WakeTimeoutMs:         1000,
 			DefaultTimeoutMs:      5000,
 			MaxConcurrentPerAgent: 3,
+			OwnerFilterEnabled:    true,
 		},
 	}
 }
@@ -1061,6 +1062,150 @@ func TestContextCancelStopsBroker(t *testing.T) {
 		// OK
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop() did not return after context cancel")
+	}
+}
+
+// --- E2E: cross-owner assignment ---
+
+// TestCrossOwnerAssignmentE2E exercises the full broker pipeline for cross-owner dispatch.
+// When OwnerFilterEnabled=false, a task submitted by owner A should be assignable to agents
+// owned by owner B. When OwnerFilterEnabled=true, the same scenario must produce no match.
+func TestCrossOwnerAssignmentE2E(t *testing.T) {
+	ownerA := uuid.New().String() // task submitter
+	ownerB := "different-owner"   // owns all agents
+
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily":  {Name: "lily", Status: "ready", Policy: "always-on"},
+		"scout": {Name: "scout", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+		{Name: "scout", Slug: "scout", Capabilities: []string{"research", "code"}},
+	}}
+	// All agents owned by ownerB — ownerA owns nothing
+	ma := &mockAlexandria{devices: []alexandria.Device{
+		{ID: "d1", Name: "lily", OwnerID: ownerB},
+		{ID: "d2", Name: "scout", OwnerID: ownerB},
+	}}
+
+	makeTask := func() *store.Task {
+		return &store.Task{
+			Owner:                ownerA,
+			Title:                "cross-owner research",
+			RequiredCapabilities: []string{"research"},
+			Priority:             5,
+			Status:               store.StatusPending,
+			TimeoutSeconds:       60,
+			Source:               "agent",
+			RetryEligible:        true,
+		}
+	}
+
+	t.Run("filter enabled blocks cross-owner", func(t *testing.T) {
+		ms := newMockStore()
+		mh := &mockHermes{}
+		cfg := testConfig()
+		cfg.Assignment.OwnerFilterEnabled = true
+		b := New(ms, mh, mw, mf, ma, cfg, discardLogger())
+
+		ctx := context.Background()
+		task := makeTask()
+		_ = ms.CreateTask(ctx, task)
+
+		b.processPendingTasks(ctx)
+
+		updated := ms.tasks[task.ID]
+		if updated.Status != store.StatusPending {
+			t.Errorf("expected pending (blocked by owner filter), got %s", updated.Status)
+		}
+		// Verify unmatched event was published
+		unmatchedFound := false
+		for _, p := range mh.published {
+			if p.subject == "swarm.task."+task.ID.String()+".unmatched" {
+				unmatchedFound = true
+			}
+		}
+		if !unmatchedFound {
+			t.Error("expected unmatched event when owner filter blocks all candidates")
+		}
+	})
+
+	t.Run("filter disabled allows cross-owner", func(t *testing.T) {
+		ms := newMockStore()
+		mh := &mockHermes{}
+		cfg := testConfig()
+		cfg.Assignment.OwnerFilterEnabled = false
+		b := New(ms, mh, mw, mf, ma, cfg, discardLogger())
+
+		ctx := context.Background()
+		task := makeTask()
+		_ = ms.CreateTask(ctx, task)
+
+		b.processPendingTasks(ctx)
+
+		updated := ms.tasks[task.ID]
+		if updated.Status != store.StatusAssigned {
+			t.Errorf("expected assigned (owner filter disabled), got %s", updated.Status)
+		}
+		if updated.AssignedAgent == "" {
+			t.Error("expected an agent to be assigned")
+		}
+		// Verify assigned event was published
+		assignedFound := false
+		for _, p := range mh.published {
+			if p.subject == "swarm.task."+task.ID.String()+".assigned" {
+				assignedFound = true
+			}
+		}
+		if !assignedFound {
+			t.Error("expected assigned event when cross-owner dispatch succeeds")
+		}
+	})
+}
+
+func TestOwnerFilterDisabled(t *testing.T) {
+	ms := newMockStore()
+	mh := &mockHermes{}
+	ownerID := uuid.New().String()
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+		"nova": {Name: "nova", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+		{Name: "nova", Slug: "nova", Capabilities: []string{"research"}},
+	}}
+	// Alexandria returns no devices for this owner — with filtering enabled, no candidates would match
+	ma := &mockAlexandria{devices: []alexandria.Device{
+		{ID: "d1", Name: "lily", OwnerID: "different-owner"},
+		{ID: "d2", Name: "nova", OwnerID: "different-owner"},
+	}}
+
+	cfg := testConfig()
+	cfg.Assignment.OwnerFilterEnabled = false
+	b := New(ms, mh, mw, mf, ma, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                ownerID,
+		Title:                "cross-owner task",
+		RequiredCapabilities: []string{"research"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       5,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned (owner filter disabled), got %s", updated.Status)
+	}
+	if updated.AssignedAgent == "" {
+		t.Error("expected an agent to be assigned when owner filter is disabled")
 	}
 }
 

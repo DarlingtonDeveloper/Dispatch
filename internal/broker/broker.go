@@ -131,7 +131,7 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	b.logger.Info("capability candidates", "count", len(candidates), "primary_cap", primaryCap)
 
 	// Owner-scoped filtering: if task has an owner, only allow agents owned by that owner
-	if task.Owner != "" && b.alexandria != nil {
+	if task.Owner != "" && b.alexandria != nil && b.cfg.Assignment.OwnerFilterEnabled {
 		ownedDevices, err := b.alexandria.GetDevicesByOwner(ctx, task.Owner)
 		if err != nil {
 			b.logger.Warn("failed to query alexandria for owner devices", "owner", task.Owner, "error", err)

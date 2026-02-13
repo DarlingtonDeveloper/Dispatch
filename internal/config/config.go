@@ -48,10 +48,11 @@ type AlexandriaConfig struct {
 }
 
 type AssignmentConfig struct {
-	TickIntervalMs        int `yaml:"tick_interval_ms"`
-	WakeTimeoutMs         int `yaml:"wake_timeout_ms"`
-	DefaultTimeoutMs      int `yaml:"default_timeout_ms"`
-	MaxConcurrentPerAgent int `yaml:"max_concurrent_per_agent"`
+	TickIntervalMs        int  `yaml:"tick_interval_ms"`
+	WakeTimeoutMs         int  `yaml:"wake_timeout_ms"`
+	DefaultTimeoutMs      int  `yaml:"default_timeout_ms"`
+	MaxConcurrentPerAgent int  `yaml:"max_concurrent_per_agent"`
+	OwnerFilterEnabled    bool `yaml:"owner_filter_enabled"`
 }
 
 type LoggingConfig struct {
@@ -94,6 +95,7 @@ func Load(path string) (*Config, error) {
 			WakeTimeoutMs:         30000,
 			DefaultTimeoutMs:      300000,
 			MaxConcurrentPerAgent: 3,
+			OwnerFilterEnabled:    true,
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -150,6 +152,11 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("DISPATCH_TICK_INTERVAL_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Assignment.TickIntervalMs = n
+		}
+	}
+	if v := os.Getenv("DISPATCH_OWNER_FILTER_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Assignment.OwnerFilterEnabled = b
 		}
 	}
 	if v := os.Getenv("DISPATCH_LOG_LEVEL"); v != "" {
