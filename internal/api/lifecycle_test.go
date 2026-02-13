@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -110,7 +111,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	var final store.Task
-	json.NewDecoder(w.Body).Decode(&final)
+	_ = json.NewDecoder(w.Body).Decode(&final)
 	if final.Status != store.StatusCompleted {
 		t.Errorf("final get: expected completed, got %s", final.Status)
 	}
@@ -134,7 +135,7 @@ func TestTaskFailureLifecycle(t *testing.T) {
 	}
 
 	var created store.Task
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 	taskID := created.ID.String()
 
 	// 2. Simulate assignment + start (broker would do this)
@@ -155,7 +156,7 @@ func TestTaskFailureLifecycle(t *testing.T) {
 	}
 
 	var failed store.Task
-	json.NewDecoder(w.Body).Decode(&failed)
+	_ = json.NewDecoder(w.Body).Decode(&failed)
 	if failed.Status != store.StatusFailed {
 		t.Errorf("fail: expected failed, got %s", failed.Status)
 	}
@@ -178,7 +179,7 @@ func TestTaskListFiltering(t *testing.T) {
 		{Title: "Task C", Owner: "system", Status: store.StatusPending, Source: "manual"},
 	}
 	for _, task := range tasks {
-		_ = ms.CreateTask(nil, task)
+		_ = ms.CreateTask(context.TODO(), task)
 	}
 
 	tests := []struct {
@@ -205,7 +206,7 @@ func TestTaskListFiltering(t *testing.T) {
 			}
 
 			var result []store.Task
-			json.NewDecoder(w.Body).Decode(&result)
+			_ = json.NewDecoder(w.Body).Decode(&result)
 			if len(result) != tt.expected {
 				t.Errorf("expected %d tasks, got %d", tt.expected, len(result))
 			}
@@ -257,7 +258,7 @@ func TestCreateTaskDefaults(t *testing.T) {
 	}
 
 	var task store.Task
-	json.NewDecoder(w.Body).Decode(&task)
+	_ = json.NewDecoder(w.Body).Decode(&task)
 
 	if task.Owner != "scout" {
 		t.Errorf("expected owner defaulted to agent ID 'scout', got '%s'", task.Owner)
@@ -286,7 +287,7 @@ func TestUpdateTaskMetadata(t *testing.T) {
 		Status: store.StatusPending,
 		Source: "manual",
 	}
-	_ = ms.CreateTask(nil, task)
+	_ = ms.CreateTask(context.TODO(), task)
 
 	body := `{"metadata":{"key":"value","count":42}}`
 	req := httptest.NewRequest("PATCH", "/api/v1/tasks/"+task.ID.String(), bytes.NewBufferString(body))
@@ -300,7 +301,7 @@ func TestUpdateTaskMetadata(t *testing.T) {
 	}
 
 	var updated store.Task
-	json.NewDecoder(w.Body).Decode(&updated)
+	_ = json.NewDecoder(w.Body).Decode(&updated)
 	if updated.Metadata == nil {
 		t.Fatal("expected metadata to be set")
 	}
@@ -320,7 +321,7 @@ func TestProgressEndpointOnAlreadyInProgress(t *testing.T) {
 		AssignedAgent: "nova",
 		Source:        "manual",
 	}
-	_ = ms.CreateTask(nil, task)
+	_ = ms.CreateTask(context.TODO(), task)
 
 	req := httptest.NewRequest("POST", "/api/v1/tasks/"+task.ID.String()+"/progress",
 		bytes.NewBufferString(`{"progress":0.75}`))

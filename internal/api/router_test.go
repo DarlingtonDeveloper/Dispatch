@@ -124,7 +124,7 @@ func TestCreateTask(t *testing.T) {
 	}
 
 	var task store.Task
-	json.NewDecoder(w.Body).Decode(&task)
+	_ = json.NewDecoder(w.Body).Decode(&task)
 	if task.Title != "Test Task" {
 		t.Errorf("expected 'Test Task', got '%s'", task.Title)
 	}
@@ -230,7 +230,7 @@ func TestCompleteTask(t *testing.T) {
 		Source:                "manual",
 		RetryEligible:        true,
 	}
-	ms.CreateTask(context.Background(), task)
+	_ = ms.CreateTask(context.Background(), task)
 
 	body := `{"result":{"output":"done"}}`
 	req := httptest.NewRequest("POST", "/api/v1/tasks/"+task.ID.String()+"/complete", bytes.NewBufferString(body))
