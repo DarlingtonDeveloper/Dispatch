@@ -1,0 +1,18 @@
+name: Deploy
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, openclaw]
+    steps:
+      - name: Pull latest
+        run: cd ~/Dispatch && git pull origin main
+
+      - name: Build image
+        run: cd ~/Dispatch && docker build -t dispatch:latest .
+
+      - name: Update service
+        run: docker service update --force warren_dispatch
