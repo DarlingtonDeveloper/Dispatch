@@ -118,7 +118,7 @@ func main() {
 
 	_ = apiServer.Shutdown(shutdownCtx)
 	_ = metricsServer.Shutdown(shutdownCtx)
-	b.Stop()
+	// b.Stop() handled by defer on line 74
 
 	logger.Info("shutdown complete")
 }
