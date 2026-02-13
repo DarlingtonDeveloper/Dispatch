@@ -30,8 +30,9 @@ type Broker struct {
 	drainedMu sync.RWMutex
 	drained   map[string]bool
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopOnce sync.Once
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
 func New(s store.Store, h hermes.Client, w warren.Client, f forge.Client, a alexandria.Client, cfg *config.Config, logger *slog.Logger) *Broker {
@@ -55,7 +56,7 @@ func (b *Broker) Start(ctx context.Context) {
 }
 
 func (b *Broker) Stop() {
-	close(b.stopCh)
+	b.stopOnce.Do(func() { close(b.stopCh) })
 	b.wg.Wait()
 }
 

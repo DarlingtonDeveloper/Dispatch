@@ -971,6 +971,99 @@ func TestHandleAgentStoppedClearsFields(t *testing.T) {
 	}
 }
 
+func TestStopIdempotent(t *testing.T) {
+	// Reproduces the double-close panic fixed in broker.Stop().
+	// Before the fix, calling Stop() twice would panic on close(b.stopCh).
+	ms := newMockStore()
+	cfg := testConfig()
+	b := New(ms, &mockHermes{}, nil, nil, nil, cfg, discardLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b.Start(ctx)
+
+	// First stop — should close cleanly
+	b.Stop()
+
+	// Second stop — must not panic (sync.Once guards the channel close)
+	b.Stop()
+
+	cancel() // cleanup
+}
+
+func TestStopWithoutStart(t *testing.T) {
+	// Stop on a broker that was never started must not hang or panic.
+	cfg := testConfig()
+	b := New(nil, nil, nil, nil, nil, cfg, discardLogger())
+
+	done := make(chan struct{})
+	go func() {
+		b.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// OK — returned without hanging
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() hung on broker that was never started")
+	}
+}
+
+func TestStartStopLifecycle(t *testing.T) {
+	// Verify Start launches goroutines and Stop terminates them cleanly.
+	ms := newMockStore()
+	cfg := testConfig()
+	b := New(ms, &mockHermes{}, nil, nil, nil, cfg, discardLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b.Start(ctx)
+
+	// Let the loops run for a couple of ticks
+	time.Sleep(300 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		b.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Clean shutdown
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() did not return within 5 seconds")
+	}
+}
+
+func TestContextCancelStopsBroker(t *testing.T) {
+	// When the parent context is cancelled, the broker loops should exit
+	// and Stop() should return promptly.
+	ms := newMockStore()
+	cfg := testConfig()
+	b := New(ms, &mockHermes{}, nil, nil, nil, cfg, discardLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b.Start(ctx)
+
+	// Cancel context — goroutines should exit
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		b.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// OK
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() did not return after context cancel")
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
