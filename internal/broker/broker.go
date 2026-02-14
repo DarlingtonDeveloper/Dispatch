@@ -113,22 +113,25 @@ func (b *Broker) processPendingTasks(ctx context.Context) {
 func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	b.logger.Info("attempting assignment", "task_id", task.ID, "capabilities", task.RequiredCapabilities, "owner", task.Owner)
 
-	// Query forge for candidates using the primary required capability
-	var primaryCap string
-	if len(task.RequiredCapabilities) > 0 {
-		primaryCap = task.RequiredCapabilities[0]
+	// Query forge for candidates — all agents if no capabilities required, else by primary capability
+	var candidates []forge.Persona
+	var err error
+	if len(task.RequiredCapabilities) == 0 {
+		candidates, err = b.forge.ListPersonas(ctx)
+		if err != nil {
+			b.logger.Error("forge list personas failed", "error", err)
+			return err
+		}
+		b.logger.Info("no capabilities required, all agents eligible", "count", len(candidates))
+	} else {
+		primaryCap := task.RequiredCapabilities[0]
+		candidates, err = b.forge.GetAgentsByCapability(ctx, primaryCap)
+		if err != nil {
+			b.logger.Error("forge capability query failed", "error", err)
+			return err
+		}
+		b.logger.Info("capability candidates", "count", len(candidates), "primary_cap", primaryCap)
 	}
-	if primaryCap == "" {
-		b.logger.Warn("task has no required capabilities", "task_id", task.ID)
-		return nil
-	}
-
-	candidates, err := b.forge.GetAgentsByCapability(ctx, primaryCap)
-	if err != nil {
-		b.logger.Error("forge capability query failed", "error", err)
-		return err
-	}
-	b.logger.Info("capability candidates", "count", len(candidates), "primary_cap", primaryCap)
 
 	// Owner-scoped filtering: if task has an owner, only allow agents owned by that owner
 	if task.Owner != "" && b.alexandria != nil && b.cfg.Assignment.OwnerFilterEnabled {

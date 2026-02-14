@@ -1209,6 +1209,138 @@ func TestOwnerFilterDisabled(t *testing.T) {
 	}
 }
 
+// --- Nil/empty capabilities assignment tests ---
+
+func TestNilCapabilitiesAssignsToAnyAgent(t *testing.T) {
+	// Tasks with nil RequiredCapabilities should be assignable to any agent
+	// via ListPersonas(), not silently skipped.
+	ms := newMockStore()
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+		"nova": {Name: "nova", Status: "ready", Policy: "on-demand"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+		{Name: "nova", Slug: "nova", Capabilities: []string{"code"}},
+	}}
+
+	cfg := testConfig()
+	cfg.Assignment.OwnerFilterEnabled = false
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "no-cap task",
+		RequiredCapabilities: nil, // NULL from Postgres
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned for nil capabilities, got %s", updated.Status)
+	}
+	if updated.AssignedAgent == "" {
+		t.Error("expected an agent to be assigned for nil capabilities task")
+	}
+	// lily should win (always-on > on-demand)
+	if updated.AssignedAgent != "lily" {
+		t.Errorf("expected lily (always-on ready), got %s", updated.AssignedAgent)
+	}
+}
+
+func TestEmptyCapabilitiesAssignsToAnyAgent(t *testing.T) {
+	// Same as nil but with explicit empty slice.
+	ms := newMockStore()
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"scout": {Name: "scout", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "scout", Slug: "scout", Capabilities: []string{"research", "code"}},
+	}}
+
+	cfg := testConfig()
+	cfg.Assignment.OwnerFilterEnabled = false
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "empty-cap task",
+		RequiredCapabilities: []string{}, // explicit empty
+		Priority:             3,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned for empty capabilities, got %s", updated.Status)
+	}
+	if updated.AssignedAgent != "scout" {
+		t.Errorf("expected scout, got %s", updated.AssignedAgent)
+	}
+}
+
+func TestNilCapabilitiesWithOwnerFilter(t *testing.T) {
+	// Nil capabilities + owner filter should still scope to owned agents.
+	ms := newMockStore()
+	mh := &mockHermes{}
+	ownerID := uuid.New().String()
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+		"nova": {Name: "nova", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+		{Name: "nova", Slug: "nova", Capabilities: []string{"code"}},
+	}}
+	ma := &mockAlexandria{devices: []alexandria.Device{
+		{ID: "d1", Name: "nova", OwnerID: ownerID},
+	}}
+
+	cfg := testConfig()
+	cfg.Assignment.OwnerFilterEnabled = true
+	b := New(ms, mh, mw, mf, ma, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                ownerID,
+		Title:                "nil-cap owner-scoped",
+		RequiredCapabilities: nil,
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned, got %s", updated.Status)
+	}
+	if updated.AssignedAgent != "nova" {
+		t.Errorf("expected nova (owner-scoped), got %s", updated.AssignedAgent)
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
