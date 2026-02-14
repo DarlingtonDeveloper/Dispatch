@@ -25,6 +25,7 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 
 	tasks := NewTasksHandler(s, h)
 	admin := NewAdminHandler(s, w, f, b)
+	explain := NewExplainHandler(s)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(AgentIDMiddleware)
@@ -36,6 +37,8 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 		r.Post("/tasks/{id}/complete", tasks.Complete)
 		r.Post("/tasks/{id}/fail", tasks.Fail)
 		r.Post("/tasks/{id}/progress", tasks.Progress)
+
+		r.Get("/scoring/explain/{task_id}", explain.Explain)
 
 		r.Group(func(r chi.Router) {
 			r.Use(AdminAuthMiddleware(adminToken))

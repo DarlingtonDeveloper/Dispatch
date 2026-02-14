@@ -17,6 +17,7 @@ type Config struct {
 	PromptForge ForgeConfig      `yaml:"promptforge"`
 	Alexandria  AlexandriaConfig `yaml:"alexandria"`
 	Assignment  AssignmentConfig `yaml:"assignment"`
+	Scoring     ScoringConfig    `yaml:"scoring"`
 	Logging     LoggingConfig    `yaml:"logging"`
 }
 
@@ -53,6 +54,26 @@ type AssignmentConfig struct {
 	DefaultTimeoutMs      int  `yaml:"default_timeout_ms"`
 	MaxConcurrentPerAgent int  `yaml:"max_concurrent_per_agent"`
 	OwnerFilterEnabled    bool `yaml:"owner_filter_enabled"`
+}
+
+type ScoringConfig struct {
+	Weights         ScoringWeights `yaml:"weights"`
+	FastPathEnabled bool           `yaml:"fast_path_enabled"`
+	ParetoEnabled   bool           `yaml:"pareto_enabled"`
+}
+
+type ScoringWeights struct {
+	Capability     float64 `yaml:"capability"`
+	Availability   float64 `yaml:"availability"`
+	RiskFit        float64 `yaml:"risk_fit"`
+	CostEfficiency float64 `yaml:"cost_efficiency"`
+	Verifiability  float64 `yaml:"verifiability"`
+	Reversibility  float64 `yaml:"reversibility"`
+	ComplexityFit  float64 `yaml:"complexity_fit"`
+	UncertaintyFit float64 `yaml:"uncertainty_fit"`
+	DurationFit    float64 `yaml:"duration_fit"`
+	Contextuality  float64 `yaml:"contextuality"`
+	Subjectivity   float64 `yaml:"subjectivity"`
 }
 
 type LoggingConfig struct {
@@ -96,6 +117,23 @@ func Load(path string) (*Config, error) {
 			DefaultTimeoutMs:      300000,
 			MaxConcurrentPerAgent: 3,
 			OwnerFilterEnabled:    true,
+		},
+		Scoring: ScoringConfig{
+			Weights: ScoringWeights{
+				Capability:     0.20,
+				Availability:   0.10,
+				RiskFit:        0.12,
+				CostEfficiency: 0.10,
+				Verifiability:  0.08,
+				Reversibility:  0.08,
+				ComplexityFit:  0.10,
+				UncertaintyFit: 0.07,
+				DurationFit:    0.05,
+				Contextuality:  0.05,
+				Subjectivity:   0.05,
+			},
+			FastPathEnabled: true,
+			ParetoEnabled:   false,
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

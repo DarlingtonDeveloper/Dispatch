@@ -53,6 +53,24 @@ type Task struct {
 	Source       string                 `json:"source"`
 	ParentTaskID *uuid.UUID             `json:"parent_task_id,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+
+	// Scoring v2
+	RiskScore               *float64               `json:"risk_score,omitempty"`
+	CostEstimateTokens      *int64                 `json:"cost_estimate_tokens,omitempty"`
+	CostEstimateUSD         *float64               `json:"cost_estimate_usd,omitempty"`
+	VerifiabilityScore      *float64               `json:"verifiability_score,omitempty"`
+	ReversibilityScore      *float64               `json:"reversibility_score,omitempty"`
+	OversightLevel          string                 `json:"oversight_level,omitempty"`
+	ScoringFactors          map[string]interface{} `json:"scoring_factors,omitempty"`
+	ScoringVersion          int                    `json:"scoring_version"`
+	ComplexityScore         *float64               `json:"complexity_score,omitempty"`
+	UncertaintyScore        *float64               `json:"uncertainty_score,omitempty"`
+	DurationClass           string                 `json:"duration_class,omitempty"`
+	ContextualityScore      *float64               `json:"contextuality_score,omitempty"`
+	SubjectivityScore       *float64               `json:"subjectivity_score,omitempty"`
+	FastPath                bool                   `json:"fast_path"`
+	ParetoFrontier          map[string]interface{} `json:"pareto_frontier,omitempty"`
+	AlternativeDecompositions map[string]interface{} `json:"alternative_decompositions,omitempty"`
 }
 
 type TaskFilter struct {
@@ -81,6 +99,19 @@ type TaskStats struct {
 	AvgCompletionMs float64 `json:"avg_completion_ms"`
 }
 
+type AgentTaskHistory struct {
+	ID              uuid.UUID  `json:"id"`
+	AgentSlug       string     `json:"agent_slug"`
+	TaskID          uuid.UUID  `json:"task_id"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	DurationSeconds *float64   `json:"duration_seconds,omitempty"`
+	TokensUsed      *int64     `json:"tokens_used,omitempty"`
+	CostUSD         *float64   `json:"cost_usd,omitempty"`
+	Success         *bool      `json:"success,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
 type Store interface {
 	CreateTask(ctx context.Context, task *Task) error
 	GetTask(ctx context.Context, id uuid.UUID) (*Task, error)
@@ -95,6 +126,13 @@ type Store interface {
 	GetTaskEvents(ctx context.Context, taskID uuid.UUID) ([]*TaskEvent, error)
 
 	GetStats(ctx context.Context) (*TaskStats, error)
+
+	CreateAgentTaskHistory(ctx context.Context, h *AgentTaskHistory) error
+	GetAgentTaskHistory(ctx context.Context, agentSlug string, limit int) ([]*AgentTaskHistory, error)
+	GetAgentAvgDuration(ctx context.Context, agentSlug string) (*float64, error)
+	GetAgentAvgCost(ctx context.Context, agentSlug string) (*float64, error)
+
+	GetTrustScore(ctx context.Context, agentSlug, category, severity string) (float64, error)
 
 	Close() error
 }

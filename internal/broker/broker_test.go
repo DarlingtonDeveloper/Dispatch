@@ -21,8 +21,9 @@ import (
 // Mock implementations
 
 type mockStore struct {
-	tasks  map[uuid.UUID]*store.Task
-	events []*store.TaskEvent
+	tasks       map[uuid.UUID]*store.Task
+	events      []*store.TaskEvent
+	trustScores map[string]float64 // key: "slug|category|severity"
 }
 
 func newMockStore() *mockStore {
@@ -94,6 +95,26 @@ func (m *mockStore) GetTaskEvents(_ context.Context, taskID uuid.UUID) ([]*store
 }
 func (m *mockStore) GetStats(_ context.Context) (*store.TaskStats, error) {
 	return &store.TaskStats{}, nil
+}
+func (m *mockStore) CreateAgentTaskHistory(_ context.Context, _ *store.AgentTaskHistory) error {
+	return nil
+}
+func (m *mockStore) GetAgentTaskHistory(_ context.Context, _ string, _ int) ([]*store.AgentTaskHistory, error) {
+	return nil, nil
+}
+func (m *mockStore) GetAgentAvgDuration(_ context.Context, _ string) (*float64, error) {
+	return nil, nil
+}
+func (m *mockStore) GetAgentAvgCost(_ context.Context, _ string) (*float64, error) {
+	return nil, nil
+}
+func (m *mockStore) GetTrustScore(_ context.Context, slug, category, severity string) (float64, error) {
+	if m.trustScores != nil {
+		if v, ok := m.trustScores[slug+"|"+category+"|"+severity]; ok {
+			return v, nil
+		}
+	}
+	return 0.0, nil
 }
 func (m *mockStore) Close() error { return nil }
 
@@ -178,6 +199,23 @@ func testConfig() *config.Config {
 			DefaultTimeoutMs:      5000,
 			MaxConcurrentPerAgent: 3,
 			OwnerFilterEnabled:    true,
+		},
+		Scoring: config.ScoringConfig{
+			Weights: config.ScoringWeights{
+				Capability:     0.20,
+				Availability:   0.10,
+				RiskFit:        0.12,
+				CostEfficiency: 0.10,
+				Verifiability:  0.08,
+				Reversibility:  0.08,
+				ComplexityFit:  0.10,
+				UncertaintyFit: 0.07,
+				DurationFit:    0.05,
+				Contextuality:  0.05,
+				Subjectivity:   0.05,
+			},
+			FastPathEnabled: true,
+			ParetoEnabled:   false,
 		},
 	}
 }
@@ -1338,6 +1376,282 @@ func TestNilCapabilitiesWithOwnerFilter(t *testing.T) {
 	}
 	if updated.AssignedAgent != "nova" {
 		t.Errorf("expected nova (owner-scoped), got %s", updated.AssignedAgent)
+	}
+}
+
+func TestBrokerAssignmentV2Scoring(t *testing.T) {
+	ms := newMockStore()
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+		"nova": {Name: "nova", Status: "sleeping", Policy: "on-demand"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research", "analysis"}},
+		{Name: "nova", Slug: "nova", Capabilities: []string{"research", "code"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "v2 scoring test",
+		RequiredCapabilities: []string{"research"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned, got %s", updated.Status)
+	}
+	// Scoring v2 fields should be populated
+	if updated.ScoringVersion != 2 {
+		t.Errorf("expected scoring_version=2, got %d", updated.ScoringVersion)
+	}
+	if updated.ScoringFactors == nil {
+		t.Error("expected scoring_factors to be set")
+	}
+	if updated.OversightLevel == "" {
+		t.Error("expected oversight_level to be set")
+	}
+	// Verify total_score is in the factors
+	if _, ok := updated.ScoringFactors["total_score"]; !ok {
+		t.Error("expected total_score key in scoring_factors")
+	}
+}
+
+func TestFastPathAssignment(t *testing.T) {
+	ms := newMockStore()
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	// Task with low complexity, low risk, high reversibility → fast path eligible
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "fast path test",
+		RequiredCapabilities: []string{"research"},
+		Priority:             1,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+		Metadata: map[string]interface{}{
+			"complexity":    0.1,
+			"risk":          0.1,
+			"reversibility": 0.9,
+		},
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Errorf("expected assigned, got %s", updated.Status)
+	}
+	if !updated.FastPath {
+		t.Error("expected fast_path=true for low-risk simple task")
+	}
+}
+
+func TestTrustScoreLookup(t *testing.T) {
+	ms := newMockStore()
+	ms.trustScores = map[string]float64{
+		"lily||": 0.85, // default category/severity
+	}
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	// Set low risk + high verifiability/reversibility so trust is the deciding factor
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "trust lookup test",
+		RequiredCapabilities: []string{"research"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+		Metadata: map[string]interface{}{
+			"risk":          0.1,
+			"verifiability": 0.9,
+			"reversibility": 0.9,
+		},
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Fatalf("expected assigned, got %s", updated.Status)
+	}
+	if updated.OversightLevel == "" {
+		t.Error("expected oversight_level to be set")
+	}
+	// oversight = 0.1*0.35 + 0.1*0.25 + 0.1*0.25 + 0.15*0.15 = 0.035+0.025+0.025+0.0225 = 0.1075 → autonomous
+	if updated.OversightLevel != "autonomous" {
+		t.Errorf("expected autonomous with high trust + low risk, got %s", updated.OversightLevel)
+	}
+}
+
+func TestTrustScoreLookupByCategorySeverity(t *testing.T) {
+	ms := newMockStore()
+	ms.trustScores = map[string]float64{
+		"lily|deploy|critical": 0.3, // low trust for critical deploys
+	}
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"deploy"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "critical deploy",
+		RequiredCapabilities: []string{"deploy"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+		Metadata: map[string]interface{}{
+			"category": "deploy",
+			"severity": "critical",
+		},
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Fatalf("expected assigned, got %s", updated.Status)
+	}
+	// Low trust (0.3) should produce higher oversight
+	if updated.OversightLevel == "autonomous" {
+		t.Error("expected non-autonomous oversight with low trust score")
+	}
+}
+
+func TestTrustScoreMetadataOverridesDB(t *testing.T) {
+	ms := newMockStore()
+	ms.trustScores = map[string]float64{
+		"lily||": 0.2, // low trust in DB — should be ignored
+	}
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "metadata trust override",
+		RequiredCapabilities: []string{"research"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+		Metadata: map[string]interface{}{
+			"trust_level":   0.95, // high trust via metadata — takes precedence
+			"risk":          0.1,
+			"verifiability": 0.9,
+			"reversibility": 0.9,
+		},
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Fatalf("expected assigned, got %s", updated.Status)
+	}
+	// oversight = 0.1*0.35 + 0.1*0.25 + 0.1*0.25 + 0.05*0.15 = 0.035+0.025+0.025+0.0075 = 0.0925 → autonomous
+	// Metadata trust (0.95) should take precedence over DB trust (0.2)
+	if updated.OversightLevel != "autonomous" {
+		t.Errorf("expected autonomous with high metadata trust, got %s", updated.OversightLevel)
+	}
+}
+
+func TestTrustScoreZeroUsesDefault(t *testing.T) {
+	// No trust score in DB → AgentTrustLevel stays nil → default 0.5 used by scorer
+	ms := newMockStore()
+	mh := &mockHermes{}
+	mw := &mockWarren{states: map[string]*warren.AgentState{
+		"lily": {Name: "lily", Status: "ready", Policy: "always-on"},
+	}}
+	mf := &mockForge{personas: []forge.Persona{
+		{Name: "lily", Slug: "lily", Capabilities: []string{"research"}},
+	}}
+
+	cfg := testConfig()
+	b := New(ms, mh, mw, mf, nil, cfg, discardLogger())
+
+	ctx := context.Background()
+	task := &store.Task{
+		Owner:                "system",
+		Title:                "no trust score",
+		RequiredCapabilities: []string{"research"},
+		Priority:             5,
+		Status:               store.StatusPending,
+		TimeoutSeconds:       60,
+		Source:               "manual",
+		RetryEligible:        true,
+	}
+	_ = ms.CreateTask(ctx, task)
+
+	b.processPendingTasks(ctx)
+
+	updated := ms.tasks[task.ID]
+	if updated.Status != store.StatusAssigned {
+		t.Fatalf("expected assigned, got %s", updated.Status)
+	}
+	// With default trust (0.5) and default risk/verifiability/reversibility (all 0.5),
+	// oversight should land in the middle range
+	if updated.OversightLevel == "" {
+		t.Error("expected oversight_level to be set even without trust score")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/MikeSquared-Agency/Dispatch/internal/config"
 	"github.com/MikeSquared-Agency/Dispatch/internal/forge"
 	"github.com/MikeSquared-Agency/Dispatch/internal/hermes"
+	"github.com/MikeSquared-Agency/Dispatch/internal/scoring"
 	"github.com/MikeSquared-Agency/Dispatch/internal/store"
 	"github.com/MikeSquared-Agency/Dispatch/internal/warren"
 )
@@ -24,6 +25,7 @@ type Broker struct {
 	warren     warren.Client
 	forge      forge.Client
 	alexandria alexandria.Client
+	scorer     *scoring.Scorer
 	cfg        *config.Config
 	logger     *slog.Logger
 
@@ -36,12 +38,28 @@ type Broker struct {
 }
 
 func New(s store.Store, h hermes.Client, w warren.Client, f forge.Client, a alexandria.Client, cfg *config.Config, logger *slog.Logger) *Broker {
+	weights := scoring.WeightSet{
+		Capability:     cfg.Scoring.Weights.Capability,
+		Availability:   cfg.Scoring.Weights.Availability,
+		RiskFit:        cfg.Scoring.Weights.RiskFit,
+		CostEfficiency: cfg.Scoring.Weights.CostEfficiency,
+		Verifiability:  cfg.Scoring.Weights.Verifiability,
+		Reversibility:  cfg.Scoring.Weights.Reversibility,
+		ComplexityFit:  cfg.Scoring.Weights.ComplexityFit,
+		UncertaintyFit: cfg.Scoring.Weights.UncertaintyFit,
+		DurationFit:    cfg.Scoring.Weights.DurationFit,
+		Contextuality:  cfg.Scoring.Weights.Contextuality,
+		Subjectivity:   cfg.Scoring.Weights.Subjectivity,
+	}
+	sc := scoring.NewScorer(weights, cfg.Scoring.FastPathEnabled, logger)
+
 	return &Broker{
 		store:      s,
 		hermes:     h,
 		warren:     w,
 		forge:      f,
 		alexandria: a,
+		scorer:     sc,
 		cfg:        cfg,
 		logger:     logger,
 		drained:    make(map[string]bool),
@@ -171,11 +189,11 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 		return nil
 	}
 
-	type scored struct {
+	type scoredV2 struct {
 		persona forge.Persona
-		score   float64
+		result  scoring.ScoringResult
 	}
-	var scoredCandidates []scored
+	var scoredCandidates []scoredV2
 
 	for _, c := range candidates {
 		if b.IsDrained(c.Name) {
@@ -187,9 +205,10 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 			continue
 		}
 
-		s := ScoreCandidate(c, state, task, b.store, ctx, b.cfg.Assignment.MaxConcurrentPerAgent)
-		if s > 0 {
-			scoredCandidates = append(scoredCandidates, scored{persona: c, score: s})
+		tc := b.buildTaskContext(ctx, c, state, task)
+		result := b.scorer.ScoreCandidate(tc)
+		if result.Eligible {
+			scoredCandidates = append(scoredCandidates, scoredV2{persona: c, result: result})
 		}
 	}
 
@@ -198,7 +217,7 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	}
 
 	sort.Slice(scoredCandidates, func(i, j int) bool {
-		return scoredCandidates[i].score > scoredCandidates[j].score
+		return scoredCandidates[i].result.TotalScore > scoredCandidates[j].result.TotalScore
 	})
 
 	winner := scoredCandidates[0]
@@ -218,6 +237,9 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	task.AssignedAgent = winner.persona.Slug
 	task.AssignedAt = &now
 
+	// Apply v2 scoring fields to task for persistence
+	b.applyScoring(task, winner.result)
+
 	if err := b.store.UpdateTask(ctx, task); err != nil {
 		return err
 	}
@@ -230,9 +252,24 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 
 	if b.hermes != nil {
 		_ = b.hermes.Publish(hermes.SubjectTaskAssigned(task.ID.String()), task)
+		_ = b.hermes.Publish(hermes.SubjectDispatchAssigned(task.ID.String()), hermes.DispatchAssignedEvent{
+			TaskID:         task.ID.String(),
+			AssignedAgent:  winner.persona.Slug,
+			TotalScore:     winner.result.TotalScore,
+			Factors:        winner.result.Factors,
+			OversightLevel: winner.result.OversightLevel,
+			FastPath:       winner.result.FastPath,
+		})
+		if winner.result.OversightLevel != "" {
+			_ = b.hermes.Publish(hermes.SubjectDispatchOversight(task.ID.String()), hermes.OversightSetEvent{
+				TaskID:         task.ID.String(),
+				OversightLevel: winner.result.OversightLevel,
+			})
+		}
 	}
 
-	b.logger.Info("task assigned", "task_id", task.ID, "assigned_agent", winner.persona.Name, "score", winner.score)
+	b.logger.Info("task assigned", "task_id", task.ID, "assigned_agent", winner.persona.Name,
+		"score", winner.result.TotalScore, "oversight", winner.result.OversightLevel, "fast_path", winner.result.FastPath)
 	return nil
 }
 
@@ -375,6 +412,45 @@ func (b *Broker) handleCompleted(evt hermes.TaskCompletedEvent) {
 		TaskID: task.ID,
 		Event:  "completed",
 	})
+
+	// Record agent task history for v2 scoring enrichment
+	if task.AssignedAgent != "" {
+		h := &store.AgentTaskHistory{
+			AgentSlug:   task.AssignedAgent,
+			TaskID:      task.ID,
+			StartedAt:   task.StartedAt,
+			CompletedAt: &now,
+			Success:     boolPtr(true),
+		}
+		if task.AssignedAt != nil {
+			dur := now.Sub(*task.AssignedAt).Seconds()
+			h.DurationSeconds = &dur
+		}
+		// Extract tokens/cost from result if available
+		if evt.Result != nil {
+			if tokens, ok := evt.Result["tokens_used"].(float64); ok {
+				t := int64(tokens)
+				h.TokensUsed = &t
+			}
+			if cost, ok := evt.Result["cost_usd"].(float64); ok {
+				h.CostUSD = &cost
+			}
+		}
+		_ = b.store.CreateAgentTaskHistory(ctx, h)
+	}
+
+	// Publish dispatch completed event
+	if b.hermes != nil {
+		var dur float64
+		if task.AssignedAt != nil {
+			dur = now.Sub(*task.AssignedAt).Seconds()
+		}
+		_ = b.hermes.Publish(hermes.SubjectDispatchCompleted(task.ID.String()), hermes.DispatchCompletedEvent{
+			TaskID:          task.ID.String(),
+			Agent:           task.AssignedAgent,
+			DurationSeconds: dur,
+		})
+	}
 }
 
 func (b *Broker) handleFailed(evt hermes.TaskFailedEvent) {
@@ -485,6 +561,107 @@ func (b *Broker) handleProgress(evt map[string]interface{}) {
 		Payload: evt,
 	})
 }
+
+// buildTaskContext creates a TaskContext for v2 scoring, with optional enrichment.
+func (b *Broker) buildTaskContext(ctx context.Context, persona forge.Persona, state *warren.AgentState, task *store.Task) *scoring.TaskContext {
+	active, _ := b.store.GetActiveTasksForAgent(ctx, persona.Slug)
+
+	tc := &scoring.TaskContext{
+		Task:            task,
+		Persona:         persona,
+		AgentState:      state,
+		ActiveTaskCount: len(active),
+		MaxConcurrent:   b.cfg.Assignment.MaxConcurrentPerAgent,
+	}
+
+	// Enrich from task metadata
+	b.enrichFromMetadata(tc)
+
+	// Enrich from agent history (best-effort)
+	b.enrichFromHistory(ctx, tc)
+
+	return tc
+}
+
+// enrichFromMetadata extracts scoring hints from task.Metadata.
+func (b *Broker) enrichFromMetadata(tc *scoring.TaskContext) {
+	m := tc.Task.Metadata
+	if m == nil {
+		return
+	}
+	if v, ok := m["risk"].(float64); ok && tc.Task.RiskScore == nil {
+		tc.Task.RiskScore = &v
+	}
+	if v, ok := m["complexity"].(float64); ok && tc.Task.ComplexityScore == nil {
+		tc.Task.ComplexityScore = &v
+	}
+	if v, ok := m["verifiability"].(float64); ok && tc.Task.VerifiabilityScore == nil {
+		tc.Task.VerifiabilityScore = &v
+	}
+	if v, ok := m["reversibility"].(float64); ok && tc.Task.ReversibilityScore == nil {
+		tc.Task.ReversibilityScore = &v
+	}
+	if v, ok := m["uncertainty"].(float64); ok && tc.Task.UncertaintyScore == nil {
+		tc.Task.UncertaintyScore = &v
+	}
+	if v, ok := m["contextuality"].(float64); ok && tc.Task.ContextualityScore == nil {
+		tc.Task.ContextualityScore = &v
+	}
+	if v, ok := m["subjectivity"].(float64); ok && tc.Task.SubjectivityScore == nil {
+		tc.Task.SubjectivityScore = &v
+	}
+	if v, ok := m["duration_class"].(string); ok && tc.Task.DurationClass == "" {
+		tc.Task.DurationClass = v
+	}
+	if v, ok := m["trust_level"].(float64); ok {
+		tc.AgentTrustLevel = &v
+	}
+}
+
+// enrichFromHistory queries agent history for average duration, cost, and trust.
+func (b *Broker) enrichFromHistory(ctx context.Context, tc *scoring.TaskContext) {
+	avgDur, err := b.store.GetAgentAvgDuration(ctx, tc.Persona.Slug)
+	if err == nil && avgDur != nil {
+		tc.AgentAvgDuration = avgDur
+	}
+	avgCost, err := b.store.GetAgentAvgCost(ctx, tc.Persona.Slug)
+	if err == nil && avgCost != nil {
+		tc.AgentAvgCost = avgCost
+	}
+
+	// Trust score from agent_trust table (only if not already set from metadata)
+	if tc.AgentTrustLevel == nil {
+		category, _ := tc.Task.Metadata["category"].(string)
+		severity, _ := tc.Task.Metadata["severity"].(string)
+		trust, err := b.store.GetTrustScore(ctx, tc.Persona.Slug, category, severity)
+		if err == nil && trust > 0 {
+			tc.AgentTrustLevel = &trust
+		}
+	}
+}
+
+// applyScoring writes the ScoringResult fields onto the Task struct for persistence.
+func (b *Broker) applyScoring(task *store.Task, result scoring.ScoringResult) {
+	task.ScoringVersion = 2
+	task.OversightLevel = result.OversightLevel
+	task.FastPath = result.FastPath
+
+	// Store factor breakdown as JSON
+	factors := make(map[string]interface{})
+	for _, f := range result.Factors {
+		factors[f.Name] = map[string]interface{}{
+			"score":     f.Score,
+			"weight":    f.Weight,
+			"weighted":  f.Weighted,
+			"available": f.Available,
+			"reason":    f.Reason,
+		}
+	}
+	factors["total_score"] = result.TotalScore
+	task.ScoringFactors = factors
+}
+
+func boolPtr(b bool) *bool { return &b }
 
 func splitSubject(subject string) []string {
 	var parts []string

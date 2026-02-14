@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -56,6 +57,38 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Logging.Format != "json" {
 		t.Errorf("expected log format 'json', got '%s'", cfg.Logging.Format)
+	}
+
+	// Scoring defaults
+	sw := cfg.Scoring.Weights
+	expectedWeights := map[string]float64{
+		"capability": 0.20, "availability": 0.10, "risk_fit": 0.12,
+		"cost_efficiency": 0.10, "verifiability": 0.08, "reversibility": 0.08,
+		"complexity_fit": 0.10, "uncertainty_fit": 0.07, "duration_fit": 0.05,
+		"contextuality": 0.05, "subjectivity": 0.05,
+	}
+	actualWeights := map[string]float64{
+		"capability": sw.Capability, "availability": sw.Availability, "risk_fit": sw.RiskFit,
+		"cost_efficiency": sw.CostEfficiency, "verifiability": sw.Verifiability, "reversibility": sw.Reversibility,
+		"complexity_fit": sw.ComplexityFit, "uncertainty_fit": sw.UncertaintyFit, "duration_fit": sw.DurationFit,
+		"contextuality": sw.Contextuality, "subjectivity": sw.Subjectivity,
+	}
+	var weightSum float64
+	for name, expected := range expectedWeights {
+		actual := actualWeights[name]
+		if math.Abs(actual-expected) > 0.001 {
+			t.Errorf("scoring weight %s: expected %f, got %f", name, expected, actual)
+		}
+		weightSum += actual
+	}
+	if math.Abs(weightSum-1.0) > 0.001 {
+		t.Errorf("scoring weights sum to %f, expected 1.0", weightSum)
+	}
+	if !cfg.Scoring.FastPathEnabled {
+		t.Error("expected fast_path_enabled=true by default")
+	}
+	if cfg.Scoring.ParetoEnabled {
+		t.Error("expected pareto_enabled=false by default")
 	}
 
 	// Duration helpers

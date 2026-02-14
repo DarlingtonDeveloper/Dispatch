@@ -76,6 +76,21 @@ func (m *mockStore) GetTaskEvents(_ context.Context, _ uuid.UUID) ([]*store.Task
 func (m *mockStore) GetStats(_ context.Context) (*store.TaskStats, error) {
 	return &store.TaskStats{TotalPending: 1}, nil
 }
+func (m *mockStore) CreateAgentTaskHistory(_ context.Context, _ *store.AgentTaskHistory) error {
+	return nil
+}
+func (m *mockStore) GetAgentTaskHistory(_ context.Context, _ string, _ int) ([]*store.AgentTaskHistory, error) {
+	return nil, nil
+}
+func (m *mockStore) GetAgentAvgDuration(_ context.Context, _ string) (*float64, error) {
+	return nil, nil
+}
+func (m *mockStore) GetAgentAvgCost(_ context.Context, _ string) (*float64, error) {
+	return nil, nil
+}
+func (m *mockStore) GetTrustScore(_ context.Context, _, _, _ string) (float64, error) {
+	return 0.0, nil
+}
 func (m *mockStore) Close() error { return nil }
 
 type mockHermes struct{}
@@ -102,7 +117,17 @@ func (m *mockForge) GetAgentsByCapability(_ context.Context, _ string) ([]forge.
 func setupTestRouter() (http.Handler, *mockStore) {
 	ms := newMockStore()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := &config.Config{Assignment: config.AssignmentConfig{TickIntervalMs: 100, MaxConcurrentPerAgent: 3}}
+	cfg := &config.Config{
+		Assignment: config.AssignmentConfig{TickIntervalMs: 100, MaxConcurrentPerAgent: 3},
+		Scoring: config.ScoringConfig{
+			Weights: config.ScoringWeights{
+				Capability: 0.20, Availability: 0.10, RiskFit: 0.12, CostEfficiency: 0.10,
+				Verifiability: 0.08, Reversibility: 0.08, ComplexityFit: 0.10,
+				UncertaintyFit: 0.07, DurationFit: 0.05, Contextuality: 0.05, Subjectivity: 0.05,
+			},
+			FastPathEnabled: true,
+		},
+	}
 	b := broker.New(ms, &mockHermes{}, &mockWarren{}, &mockForge{}, nil, cfg, logger)
 	router := NewRouter(ms, &mockHermes{}, &mockWarren{}, &mockForge{}, b, "test-token", logger)
 	return router, ms

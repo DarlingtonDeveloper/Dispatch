@@ -21,3 +21,7 @@ func SubjectTaskDLQ(taskID string) string         { return "swarm.task." + taskI
 func SubjectTaskReassigned(taskID string) string  { return "swarm.task." + taskID + ".reassigned" }
 func SubjectTaskProgress(taskID string) string    { return "swarm.task." + taskID + ".progress" }
 func SubjectTaskUnmatched(taskID string) string   { return "swarm.task." + taskID + ".unmatched" }
+
+func SubjectDispatchAssigned(taskID string) string  { return "swarm.dispatch." + taskID + ".assigned" }
+func SubjectDispatchCompleted(taskID string) string { return "swarm.dispatch." + taskID + ".completed" }
+func SubjectDispatchOversight(taskID string) string { return "swarm.dispatch." + taskID + ".oversight" }
