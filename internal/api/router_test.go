@@ -88,6 +88,9 @@ func (m *mockStore) GetAgentAvgDuration(_ context.Context, _ string) (*float64, 
 func (m *mockStore) GetAgentAvgCost(_ context.Context, _ string) (*float64, error) {
 	return nil, nil
 }
+func (m *mockStore) GetTrustScore(_ context.Context, _, _, _ string) (float64, error) {
+	return 0.0, nil
+}
 func (m *mockStore) Close() error { return nil }
 
 type mockHermes struct{}

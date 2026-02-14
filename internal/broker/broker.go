@@ -618,7 +618,7 @@ func (b *Broker) enrichFromMetadata(tc *scoring.TaskContext) {
 	}
 }
 
-// enrichFromHistory queries agent history for average duration and cost.
+// enrichFromHistory queries agent history for average duration, cost, and trust.
 func (b *Broker) enrichFromHistory(ctx context.Context, tc *scoring.TaskContext) {
 	avgDur, err := b.store.GetAgentAvgDuration(ctx, tc.Persona.Slug)
 	if err == nil && avgDur != nil {
@@ -627,6 +627,16 @@ func (b *Broker) enrichFromHistory(ctx context.Context, tc *scoring.TaskContext)
 	avgCost, err := b.store.GetAgentAvgCost(ctx, tc.Persona.Slug)
 	if err == nil && avgCost != nil {
 		tc.AgentAvgCost = avgCost
+	}
+
+	// Trust score from agent_trust table (only if not already set from metadata)
+	if tc.AgentTrustLevel == nil {
+		category, _ := tc.Task.Metadata["category"].(string)
+		severity, _ := tc.Task.Metadata["severity"].(string)
+		trust, err := b.store.GetTrustScore(ctx, tc.Persona.Slug, category, severity)
+		if err == nil && trust > 0 {
+			tc.AgentTrustLevel = &trust
+		}
 	}
 }
 

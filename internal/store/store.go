@@ -132,5 +132,7 @@ type Store interface {
 	GetAgentAvgDuration(ctx context.Context, agentSlug string) (*float64, error)
 	GetAgentAvgCost(ctx context.Context, agentSlug string) (*float64, error)
 
+	GetTrustScore(ctx context.Context, agentSlug, category, severity string) (float64, error)
+
 	Close() error
 }

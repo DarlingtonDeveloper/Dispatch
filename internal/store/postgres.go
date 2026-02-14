@@ -464,3 +464,19 @@ func (s *PostgresStore) GetAgentAvgCost(ctx context.Context, agentSlug string) (
 	}
 	return &avg.Float64, nil
 }
+
+func (s *PostgresStore) GetTrustScore(ctx context.Context, agentSlug, category, severity string) (float64, error) {
+	var score sql.NullFloat64
+	err := s.pool.QueryRow(ctx, `
+		SELECT trust_score FROM agent_trust
+		WHERE agent_slug = $1 AND category = $2 AND severity = $3`,
+		agentSlug, category, severity,
+	).Scan(&score)
+	if err == pgx.ErrNoRows || !score.Valid {
+		return 0.0, nil
+	}
+	if err != nil {
+		return 0.0, err
+	}
+	return score.Float64, nil
+}
