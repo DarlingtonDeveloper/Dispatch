@@ -1034,13 +1034,13 @@ func TestBacklogNextWithModelTierRouting(t *testing.T) {
 			name:     "Regular item gets standard tier",
 			item:     &store.BacklogItem{Title: "Regular Task", ItemType: "task", Status: store.BacklogStatusReady},
 			wantTier: "standard",
-			wantRuntime: "picoclaw", // standard with 0 file patterns gets picoclaw
+			wantRuntime: "openclaw", // standard with 0 file patterns gets picoclaw
 		},
 		{
 			name:     "Config-labeled item gets economy tier",
 			item:     &store.BacklogItem{Title: "Config Update", ItemType: "task", Status: store.BacklogStatusReady, Labels: []string{"config"}},
 			wantTier: "economy", // based on ColdStartRules
-			wantRuntime: "picoclaw",
+			wantRuntime: "openclaw",
 		},
 	}
 

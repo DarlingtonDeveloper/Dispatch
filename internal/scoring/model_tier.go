@@ -134,17 +134,10 @@ func matchesColdStartRule(task *store.Task, rule config.ColdStartRule) bool {
 }
 
 // RuntimeForTier returns the appropriate runtime for a given tier and file count.
+// NOTE: PicoClaw disabled — OAuth tokens not supported. All tiers route through OpenClaw.
+// Re-enable when PicoClaw supports OAuth or a standard API key is configured.
 func RuntimeForTier(tierName string, fileCount int) string {
-	switch tierName {
-	case "economy":
-		return "picoclaw"
-	case "standard":
-		return "picoclaw"
-	case "premium":
-		return "openclaw"
-	default:
-		return "openclaw"
-	}
+	return "openclaw"
 }
 
 func tierByName(name string, tiers []config.ModelTierDef) ModelTier {

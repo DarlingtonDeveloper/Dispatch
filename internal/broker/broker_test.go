@@ -1800,8 +1800,8 @@ func TestBrokerAssignmentModelRoutingWithLabels(t *testing.T) {
 	if updated.ModelTier != "economy" {
 		t.Errorf("expected economy tier for config task, got '%s'", updated.ModelTier)
 	}
-	if updated.Runtime != "picoclaw" {
-		t.Errorf("expected picoclaw runtime for economy tier, got '%s'", updated.Runtime)
+	if updated.Runtime != "openclaw" {
+		t.Errorf("expected openclaw runtime for economy tier (picoclaw disabled), got '%s'", updated.Runtime)
 	}
 }
 

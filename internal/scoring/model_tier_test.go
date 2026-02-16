@@ -208,11 +208,11 @@ func TestRuntimeForTier(t *testing.T) {
 		fileCount int
 		want      string
 	}{
-		{"economy", 0, "picoclaw"},
-		{"economy", 5, "picoclaw"},
-		{"standard", 0, "picoclaw"},
-		{"standard", 1, "picoclaw"},
-		{"standard", 2, "picoclaw"},
+		{"economy", 0, "openclaw"},
+		{"economy", 5, "openclaw"},
+		{"standard", 0, "openclaw"},
+		{"standard", 1, "openclaw"},
+		{"standard", 2, "openclaw"},
 		{"premium", 0, "openclaw"},
 		{"premium", 1, "openclaw"},
 		{"unknown", 0, "openclaw"},
