@@ -28,7 +28,8 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 	tasks := NewTasksHandler(s, h, cfg.ModelRouting)
 	admin := NewAdminHandler(s, w, f, b)
 	explain := NewExplainHandler(s)
-	backlog := NewBacklogHandler(s, h, bs)
+	backlog := NewBacklogHandler(s, h, bs, cfg.ModelRouting)
+	stages := NewStagesHandler(s, h, cfg)
 	deps := NewDependenciesHandler(s)
 	overrides := NewOverridesHandler(s, h)
 	autonomy := NewAutonomyHandler(s)
@@ -80,6 +81,12 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 		r.Post("/backlog/{id}/complete", backlog.Complete)
 		r.Post("/backlog/{id}/block", backlog.Block)
 		r.Post("/backlog/{id}/park", backlog.Park)
+
+		// Stages
+		r.Post("/backlog/{id}/init-stages", stages.InitStages)
+		r.Post("/backlog/{id}/advance-stage", stages.AdvanceStage)
+		r.Post("/backlog/{id}/gate/satisfy", stages.SatisfyGate)
+		r.Get("/backlog/{id}/gate/status", stages.GateStatus)
 
 		// Dependencies
 		r.Post("/backlog/dependencies", deps.Create)

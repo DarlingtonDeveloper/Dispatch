@@ -108,6 +108,21 @@ type TaskStats struct {
 	AvgCompletionMs float64 `json:"avg_completion_ms"`
 }
 
+// --- Stage templates ---
+
+var StageTemplates = map[string][]string{
+	"economy":  {"implement", "verify"},
+	"standard": {"discovery", "planning", "implement", "verify", "validate"},
+	"premium":  {"discovery", "requirements", "planning", "design", "implement", "verify", "validate", "release"},
+}
+
+type GateCriterion struct {
+	Criterion   string     `json:"criterion"`
+	Satisfied   bool       `json:"satisfied"`
+	SatisfiedAt *time.Time `json:"satisfied_at,omitempty"`
+	SatisfiedBy string     `json:"satisfied_by,omitempty"`
+}
+
 // --- Backlog types ---
 
 type BacklogStatus string
@@ -148,6 +163,11 @@ type BacklogItem struct {
 	ModelTier  string   `json:"model_tier,omitempty"`
 	Labels     []string `json:"labels,omitempty"`
 	OneWayDoor bool     `json:"one_way_door"`
+
+	// Stage engine
+	StageTemplate []string `json:"stage_template,omitempty"`
+	CurrentStage  string   `json:"current_stage,omitempty"`
+	StageIndex    int      `json:"stage_index"`
 
 	// Discovery
 	DiscoveryAssessment map[string]interface{} `json:"discovery_assessment,omitempty"`
@@ -310,6 +330,17 @@ type Store interface {
 
 	// Discovery (transactional)
 	BacklogDiscoveryComplete(ctx context.Context, itemID uuid.UUID, req *BacklogDiscoveryCompleteRequest, scoreFn ScoreFn, tierFn TierFn) (*BacklogDiscoveryCompleteResult, error)
+
+	// Stage operations
+	InitStages(ctx context.Context, itemID uuid.UUID, template []string) error
+	GetCurrentStage(ctx context.Context, itemID uuid.UUID) (string, int, error)
+
+	// Gate operations
+	CreateGateCriteria(ctx context.Context, itemID uuid.UUID, stage string, criteria []string) error
+	SatisfyCriterion(ctx context.Context, itemID uuid.UUID, stage string, criterion string, satisfiedBy string) error
+	SatisfyAllCriteria(ctx context.Context, itemID uuid.UUID, stage string, satisfiedBy string) error
+	GetGateStatus(ctx context.Context, itemID uuid.UUID, stage string) ([]GateCriterion, error)
+	AllCriteriaMet(ctx context.Context, itemID uuid.UUID, stage string) (bool, error)
 
 	// Median tokens for scoring
 	GetMedianEstimatedTokens(ctx context.Context) (int64, error)

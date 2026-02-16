@@ -37,5 +37,10 @@ func SubjectBacklogBlocked(itemID string) string   { return "swarm.backlog." + i
 func SubjectBacklogParked(itemID string) string    { return "swarm.backlog." + itemID + ".parked" }
 func SubjectBacklogCancelled(itemID string) string { return "swarm.backlog." + itemID + ".cancelled" }
 
+// Stage lifecycle subjects
+func SubjectStageAdvanced(itemID string) string  { return "swarm.dispatch." + itemID + ".stage.advanced" }
+func SubjectGateSatisfied(itemID string) string   { return "swarm.dispatch." + itemID + ".gate.satisfied" }
+func SubjectStageCompleted(itemID string) string  { return "swarm.dispatch." + itemID + ".stage.completed" }
+
 // Override subjects
 func SubjectOverrideRecorded(overrideID string) string { return "swarm.override." + overrideID + ".recorded" }

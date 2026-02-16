@@ -92,6 +92,30 @@ type BacklogDiscoveryCompleteEvent struct {
 	SubtaskCount  int      `json:"subtask_count"`
 }
 
+// StageAdvancedEvent carries a stage transition.
+type StageAdvancedEvent struct {
+	ItemID        string `json:"item_id"`
+	PreviousStage string `json:"previous_stage"`
+	CurrentStage  string `json:"current_stage"`
+	Tier          string `json:"tier"`
+}
+
+// GateSatisfiedEvent carries a gate criterion satisfaction.
+type GateSatisfiedEvent struct {
+	ItemID      string `json:"item_id"`
+	Stage       string `json:"stage"`
+	Criterion   string `json:"criterion"`
+	SatisfiedBy string `json:"satisfied_by"`
+}
+
+// StageCompletedEvent carries the completion of all stages.
+type StageCompletedEvent struct {
+	ItemID      string `json:"item_id"`
+	Tier        string `json:"tier"`
+	TotalStages int    `json:"total_stages"`
+	DurationMs  int64  `json:"duration_ms"`
+}
+
 // OverrideRecordedEvent carries a human override event.
 type OverrideRecordedEvent struct {
 	OverrideID   string `json:"override_id"`

@@ -19,7 +19,12 @@ type Config struct {
 	Assignment   AssignmentConfig   `yaml:"assignment"`
 	Scoring      ScoringConfig      `yaml:"scoring"`
 	ModelRouting ModelRoutingConfig `yaml:"model_routing"`
+	StageGates   StageGatesConfig   `yaml:"stage_gates"`
 	Logging      LoggingConfig      `yaml:"logging"`
+}
+
+type StageGatesConfig struct {
+	Gates map[string][]string `yaml:"gates"`
 }
 
 type ServerConfig struct {
@@ -191,9 +196,9 @@ func Load(path string) (*Config, error) {
 				{Name: "architecture", Labels: []string{"architecture", "design", "refactor"}, Tier: "premium"},
 			},
 			Tiers: []ModelTierDef{
-				{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}},
-				{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}},
-				{Name: "premium", Models: []string{"claude-opus-4-6"}},
+				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
 			},
 			LearningThreshold: LearningThreshold{
 				MinTasks:     10,
@@ -202,6 +207,18 @@ func Load(path string) (*Config, error) {
 			QualitySafetyNet: QualitySafetyNet{
 				MaxDowngradePerSession: 2,
 				MinSuccessRate:         0.8,
+			},
+		},
+		StageGates: StageGatesConfig{
+			Gates: map[string][]string{
+				"discovery":    {"scope defined", "risks identified"},
+				"requirements": {"requirements documented", "acceptance criteria defined", "stakeholder sign-off"},
+				"planning":     {"tasks decomposed", "estimates provided"},
+				"design":       {"design documented", "design reviewed"},
+				"implement":    {"code complete", "self-review passed"},
+				"verify":       {"tests passing", "linting clean"},
+				"validate":     {"acceptance criteria met", "stakeholder approval"},
+				"release":      {"changelog updated", "deployment verified"},
 			},
 		},
 		Logging: LoggingConfig{

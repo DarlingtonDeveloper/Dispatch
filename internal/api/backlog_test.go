@@ -26,6 +26,7 @@ type backlogMockStore struct {
 	deps         map[uuid.UUID]*store.BacklogDependency
 	overrides    []*store.DispatchOverride
 	autoEvents   []*store.AutonomyEvent
+	stageGates   map[uuid.UUID]map[string][]store.GateCriterion
 }
 
 func newBacklogMockStore() *backlogMockStore {
@@ -33,6 +34,7 @@ func newBacklogMockStore() *backlogMockStore {
 		mockStore:    mockStore{tasks: make(map[uuid.UUID]*store.Task)},
 		backlogItems: make(map[uuid.UUID]*store.BacklogItem),
 		deps:         make(map[uuid.UUID]*store.BacklogDependency),
+		stageGates:   make(map[uuid.UUID]map[string][]store.GateCriterion),
 	}
 }
 
@@ -126,6 +128,106 @@ func (m *backlogMockStore) CreateAutonomyEvent(_ context.Context, e *store.Auton
 	return nil
 }
 
+func (m *backlogMockStore) InitStages(_ context.Context, itemID uuid.UUID, template []string) error {
+	item, ok := m.backlogItems[itemID]
+	if !ok {
+		return nil
+	}
+	item.StageTemplate = template
+	if len(template) > 0 {
+		item.CurrentStage = template[0]
+	}
+	item.StageIndex = 0
+	return nil
+}
+
+func (m *backlogMockStore) GetCurrentStage(_ context.Context, itemID uuid.UUID) (string, int, error) {
+	item, ok := m.backlogItems[itemID]
+	if !ok {
+		return "", 0, nil
+	}
+	return item.CurrentStage, item.StageIndex, nil
+}
+
+func (m *backlogMockStore) CreateGateCriteria(_ context.Context, itemID uuid.UUID, stage string, criteria []string) error {
+	if m.stageGates[itemID] == nil {
+		m.stageGates[itemID] = make(map[string][]store.GateCriterion)
+	}
+	for _, c := range criteria {
+		m.stageGates[itemID][stage] = append(m.stageGates[itemID][stage], store.GateCriterion{
+			Criterion: c,
+			Satisfied: false,
+		})
+	}
+	return nil
+}
+
+func (m *backlogMockStore) SatisfyCriterion(_ context.Context, itemID uuid.UUID, stage, criterion, satisfiedBy string) error {
+	if m.stageGates[itemID] == nil {
+		return nil
+	}
+	criteria := m.stageGates[itemID][stage]
+	now := time.Now()
+	for i := range criteria {
+		if !criteria[i].Satisfied && containsSubstring(criteria[i].Criterion, criterion) {
+			criteria[i].Satisfied = true
+			criteria[i].SatisfiedAt = &now
+			criteria[i].SatisfiedBy = satisfiedBy
+		}
+	}
+	m.stageGates[itemID][stage] = criteria
+	return nil
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(substr) > 0 && len(s) >= len(substr) && (s == substr || contains(s, substr))
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *backlogMockStore) SatisfyAllCriteria(_ context.Context, itemID uuid.UUID, stage, satisfiedBy string) error {
+	if m.stageGates[itemID] == nil {
+		return nil
+	}
+	criteria := m.stageGates[itemID][stage]
+	now := time.Now()
+	for i := range criteria {
+		if !criteria[i].Satisfied {
+			criteria[i].Satisfied = true
+			criteria[i].SatisfiedAt = &now
+			criteria[i].SatisfiedBy = satisfiedBy
+		}
+	}
+	m.stageGates[itemID][stage] = criteria
+	return nil
+}
+
+func (m *backlogMockStore) GetGateStatus(_ context.Context, itemID uuid.UUID, stage string) ([]store.GateCriterion, error) {
+	if m.stageGates[itemID] == nil {
+		return nil, nil
+	}
+	return m.stageGates[itemID][stage], nil
+}
+
+func (m *backlogMockStore) AllCriteriaMet(_ context.Context, itemID uuid.UUID, stage string) (bool, error) {
+	if m.stageGates[itemID] == nil {
+		return true, nil
+	}
+	for _, c := range m.stageGates[itemID][stage] {
+		if !c.Satisfied {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (m *backlogMockStore) BacklogDiscoveryComplete(_ context.Context, itemID uuid.UUID, req *store.BacklogDiscoveryCompleteRequest, scoreFn store.ScoreFn, tierFn store.TierFn) (*store.BacklogDiscoveryCompleteResult, error) {
 	item, ok := m.backlogItems[itemID]
 	if !ok {
@@ -172,10 +274,24 @@ func setupBacklogTestRouter() (http.Handler, *backlogMockStore) {
 		ModelRouting: config.ModelRoutingConfig{
 			Enabled:     true,
 			DefaultTier: "standard",
+			ColdStartRules: []config.ColdStartRule{
+				{Name: "config-only", Labels: []string{"config"}, FilePatterns: []string{"*.yaml", "*.yml", "*.toml", "*.json", "*.env"}, Tier: "economy"},
+				{Name: "single-file-lint", Labels: []string{"lint", "format"}, MaxFiles: 1, Tier: "economy"},
+				{Name: "architecture", Labels: []string{"architecture", "design", "refactor"}, Tier: "premium"},
+			},
 			Tiers: []config.ModelTierDef{
-				{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}},
-				{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}},
-				{Name: "premium", Models: []string{"claude-opus-4-6"}},
+				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
+			},
+		},
+		StageGates: config.StageGatesConfig{
+			Gates: map[string][]string{
+				"discovery":    {"scope defined", "risks identified"},
+				"planning":     {"tasks decomposed", "estimates provided"},
+				"implement":    {"code complete", "self-review passed"},
+				"verify":       {"tests passing", "linting clean"},
+				"validate":     {"acceptance criteria met"},
 			},
 		},
 	}
@@ -651,7 +767,7 @@ func TestBacklogNext(t *testing.T) {
 	score1 := 0.9
 	score2 := 0.5
 	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "High", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score1})
-	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Low", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score2})
+	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Low", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score2, OneWayDoor: true})
 	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Not Ready", ItemType: "task", Status: store.BacklogStatusBacklog})
 
 	req := httptest.NewRequest("GET", "/api/v1/backlog/next", nil)
@@ -664,10 +780,39 @@ func TestBacklogNext(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var items []store.BacklogItem
+	var items []BacklogNextItem
 	_ = json.NewDecoder(w.Body).Decode(&items)
 	if len(items) != 2 {
 		t.Errorf("expected 2 ready items, got %d", len(items))
+	}
+
+	// Check model tier information is included
+	for _, item := range items {
+		if item.ModelTier == "" {
+			t.Error("expected model_tier to be set")
+		}
+		if item.RecommendedModel == "" {
+			t.Error("expected recommended_model to be set")
+		}
+		if item.RoutingMethod == "" {
+			t.Error("expected routing_method to be set")
+		}
+		if item.Runtime == "" {
+			t.Error("expected runtime to be set")
+		}
+		
+		// OneWayDoor should result in premium tier
+		if item.OneWayDoor && item.ModelTier != "premium" {
+			t.Errorf("expected one-way-door item to have premium tier, got %s", item.ModelTier)
+		}
+		
+		// Recommended model should be from the tier
+		if item.ModelTier == "premium" && item.RecommendedModel != "anthropic/claude-opus-4-20250514" {
+			t.Errorf("expected premium tier to recommend claude-opus, got %s", item.RecommendedModel)
+		}
+		if item.ModelTier == "standard" && item.RecommendedModel != "anthropic/claude-sonnet-4-20250514" {
+			t.Errorf("expected standard tier to recommend claude-sonnet, got %s", item.RecommendedModel)
+		}
 	}
 }
 
@@ -866,5 +1011,95 @@ func TestAutonomyMetricsWithAdminToken(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBacklogNextWithModelTierRouting(t *testing.T) {
+	router, ms := setupBacklogTestRouter()
+
+	// Create items with different characteristics for tier routing
+	tests := []struct {
+		name     string
+		item     *store.BacklogItem
+		wantTier string
+		wantRuntime string
+	}{
+		{
+			name:     "OneWayDoor item gets premium tier",
+			item:     &store.BacklogItem{Title: "Critical Change", ItemType: "task", Status: store.BacklogStatusReady, OneWayDoor: true},
+			wantTier: "premium",
+			wantRuntime: "openclaw",
+		},
+		{
+			name:     "Regular item gets standard tier",
+			item:     &store.BacklogItem{Title: "Regular Task", ItemType: "task", Status: store.BacklogStatusReady},
+			wantTier: "standard",
+			wantRuntime: "picoclaw", // standard with 0 file patterns gets picoclaw
+		},
+		{
+			name:     "Config-labeled item gets economy tier",
+			item:     &store.BacklogItem{Title: "Config Update", ItemType: "task", Status: store.BacklogStatusReady, Labels: []string{"config"}},
+			wantTier: "economy", // based on ColdStartRules
+			wantRuntime: "picoclaw",
+		},
+	}
+
+	// Create all test items
+	for _, test := range tests {
+		_ = ms.CreateBacklogItem(context.Background(), test.item)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/backlog/next", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var items []BacklogNextItem
+	_ = json.NewDecoder(w.Body).Decode(&items)
+	if len(items) != len(tests) {
+		t.Fatalf("expected %d items, got %d", len(tests), len(items))
+	}
+
+	// Build a map by title to check specific items
+	itemsByTitle := make(map[string]*BacklogNextItem)
+	for i := range items {
+		itemsByTitle[items[i].Title] = &items[i]
+	}
+
+	for _, test := range tests {
+		item, found := itemsByTitle[test.item.Title]
+		if !found {
+			t.Errorf("item %q not found in response", test.item.Title)
+			continue
+		}
+
+		if item.ModelTier != test.wantTier {
+			t.Errorf("item %q: expected tier %q, got %q", test.item.Title, test.wantTier, item.ModelTier)
+		}
+
+		if item.Runtime != test.wantRuntime {
+			t.Errorf("item %q: expected runtime %q, got %q", test.item.Title, test.wantRuntime, item.Runtime)
+		}
+
+		if item.RecommendedModel == "" {
+			t.Errorf("item %q: expected recommended_model to be set", test.item.Title)
+		}
+
+		if item.RoutingMethod != "cold_start" {
+			t.Errorf("item %q: expected routing_method 'cold_start', got %q", test.item.Title, item.RoutingMethod)
+		}
+
+		// Verify the embedded BacklogItem is intact
+		if item.BacklogItem.ID != test.item.ID {
+			t.Errorf("item %q: BacklogItem ID mismatch", test.item.Title)
+		}
+		if item.BacklogItem.Title != test.item.Title {
+			t.Errorf("item %q: BacklogItem Title mismatch", test.item.Title)
+		}
 	}
 }

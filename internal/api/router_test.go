@@ -137,6 +137,15 @@ func (m *mockStore) BacklogDiscoveryComplete(_ context.Context, _ uuid.UUID, _ *
 }
 func (m *mockStore) GetMedianEstimatedTokens(_ context.Context) (int64, error) { return 0, nil }
 
+// Stage engine stubs
+func (m *mockStore) InitStages(_ context.Context, _ uuid.UUID, _ []string) error         { return nil }
+func (m *mockStore) GetCurrentStage(_ context.Context, _ uuid.UUID) (string, int, error)  { return "", 0, nil }
+func (m *mockStore) CreateGateCriteria(_ context.Context, _ uuid.UUID, _ string, _ []string) error { return nil }
+func (m *mockStore) SatisfyCriterion(_ context.Context, _ uuid.UUID, _, _, _ string) error { return nil }
+func (m *mockStore) SatisfyAllCriteria(_ context.Context, _ uuid.UUID, _, _ string) error  { return nil }
+func (m *mockStore) GetGateStatus(_ context.Context, _ uuid.UUID, _ string) ([]store.GateCriterion, error) { return nil, nil }
+func (m *mockStore) AllCriteriaMet(_ context.Context, _ uuid.UUID, _ string) (bool, error) { return true, nil }
+
 func (m *mockStore) Ping(_ context.Context) error { return nil }
 func (m *mockStore) Close() error { return nil }
 
