@@ -378,7 +378,7 @@ func (h *TasksHandler) DiscoveryComplete(w http.ResponseWriter, r *http.Request)
 	if h.modelRouting.Enabled {
 		tier := scoring.DeriveModelTier(task, h.modelRouting, false)
 		task.ModelTier = tier.Name
-		task.RoutingMethod = "cold_start"
+		task.RoutingMethod = tier.RoutingMethod
 		task.Runtime = scoring.RuntimeForTier(tier.Name, len(task.FilePatterns))
 		if len(tier.Models) > 0 {
 			task.RecommendedModel = tier.Models[0]

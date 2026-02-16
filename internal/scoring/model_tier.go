@@ -9,8 +9,9 @@ import (
 
 // ModelTier represents a resolved model tier with its available models.
 type ModelTier struct {
-	Name   string
-	Models []string
+	Name          string
+	Models        []string
+	RoutingMethod string // "cold_start" or "learned"
 }
 
 // DeriveModelTier selects the appropriate model tier for a task.
@@ -18,29 +19,46 @@ type ModelTier struct {
 // When true, the scoring engine route derives tier from complexity/risk/reversibility.
 func DeriveModelTier(task *store.Task, cfg config.ModelRoutingConfig, hasLearnedData bool) ModelTier {
 	if !cfg.Enabled {
-		return tierByName(cfg.DefaultTier, cfg.Tiers)
+		tier := tierByName(cfg.DefaultTier, cfg.Tiers)
+		tier.RoutingMethod = "cold_start"
+		return tier
+	}
+
+	routingMethod := "cold_start"
+	if hasLearnedData {
+		routingMethod = "learned"
 	}
 
 	// One-way-door override: always premium
 	if task.OneWayDoor {
-		return tierByName("premium", cfg.Tiers)
+		tier := tierByName("premium", cfg.Tiers)
+		tier.RoutingMethod = routingMethod
+		return tier
 	}
 
 	// High risk override: risk >= 0.8 → premium
 	if task.RiskScore != nil && *task.RiskScore >= 0.8 {
-		return tierByName("premium", cfg.Tiers)
+		tier := tierByName("premium", cfg.Tiers)
+		tier.RoutingMethod = routingMethod
+		return tier
 	}
 
 	if hasLearnedData {
-		return scoringEngineRoute(task, cfg)
+		tier := scoringEngineRoute(task, cfg)
+		tier.RoutingMethod = "learned"
+		return tier
 	}
 
 	// Cold start path
 	if match := ColdStartRoute(task, cfg.ColdStartRules); match != nil {
-		return tierByName(match.Name, cfg.Tiers)
+		tier := tierByName(match.Name, cfg.Tiers)
+		tier.RoutingMethod = "cold_start"
+		return tier
 	}
 
-	return tierByName(cfg.DefaultTier, cfg.Tiers)
+	tier := tierByName(cfg.DefaultTier, cfg.Tiers)
+	tier.RoutingMethod = "cold_start"
+	return tier
 }
 
 // ColdStartRoute applies static rules to determine a model tier without historical data.

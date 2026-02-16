@@ -34,6 +34,9 @@ func TestDeriveModelTier_ColdStart_ConfigOnly(t *testing.T) {
 	if tier.Name != "economy" {
 		t.Errorf("expected economy, got %s", tier.Name)
 	}
+	if tier.RoutingMethod != "cold_start" {
+		t.Errorf("expected routing_method cold_start, got %s", tier.RoutingMethod)
+	}
 }
 
 func TestDeriveModelTier_ColdStart_SingleFileLint(t *testing.T) {
@@ -114,6 +117,9 @@ func TestDeriveModelTier_LearnedData_LowComplexity(t *testing.T) {
 	tier := DeriveModelTier(task, cfg, true)
 	if tier.Name != "economy" {
 		t.Errorf("low complexity+risk should be economy, got %s", tier.Name)
+	}
+	if tier.RoutingMethod != "learned" {
+		t.Errorf("expected routing_method learned, got %s", tier.RoutingMethod)
 	}
 }
 
@@ -216,6 +222,31 @@ func TestRuntimeForTier(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("RuntimeForTier(%q, %d) = %q, want %q", tt.tier, tt.fileCount, got, tt.want)
 		}
+	}
+}
+
+func TestDeriveModelTier_RoutingMethod_LearnedWithOverride(t *testing.T) {
+	cfg := testConfig()
+	task := &store.Task{
+		Labels:     []string{"config"},
+		OneWayDoor: true,
+	}
+	// Even with hasLearnedData=true, one-way-door forces premium but routing method should be "learned"
+	tier := DeriveModelTier(task, cfg, true)
+	if tier.Name != "premium" {
+		t.Errorf("expected premium, got %s", tier.Name)
+	}
+	if tier.RoutingMethod != "learned" {
+		t.Errorf("expected routing_method learned (hasLearnedData=true), got %s", tier.RoutingMethod)
+	}
+}
+
+func TestDeriveModelTier_RoutingMethod_ColdStartDefault(t *testing.T) {
+	cfg := testConfig()
+	task := &store.Task{Labels: []string{"testing"}} // no rule match → default tier
+	tier := DeriveModelTier(task, cfg, false)
+	if tier.RoutingMethod != "cold_start" {
+		t.Errorf("expected routing_method cold_start, got %s", tier.RoutingMethod)
 	}
 }
 

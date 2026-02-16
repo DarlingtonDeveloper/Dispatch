@@ -243,7 +243,6 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	// Derive model tier after scoring
 	if b.cfg.ModelRouting.Enabled {
 		tier := scoring.DeriveModelTier(task, b.cfg.ModelRouting, false)
-		routingMethod := "cold_start"
 		runtime := scoring.RuntimeForTier(tier.Name, len(task.FilePatterns))
 		model := ""
 		if len(tier.Models) > 0 {
@@ -251,11 +250,11 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 		}
 		task.RecommendedModel = model
 		task.ModelTier = tier.Name
-		task.RoutingMethod = routingMethod
+		task.RoutingMethod = tier.RoutingMethod
 		task.Runtime = runtime
 		winner.result.RecommendedModel = model
 		winner.result.ModelTier = tier.Name
-		winner.result.RoutingMethod = routingMethod
+		winner.result.RoutingMethod = tier.RoutingMethod
 		winner.result.Runtime = runtime
 	}
 
