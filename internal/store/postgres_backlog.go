@@ -383,7 +383,7 @@ func (s *PostgresStore) BacklogDiscoveryComplete(ctx context.Context, itemID uui
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// 1. Lock and read current item
 	row := tx.QueryRow(ctx, `SELECT `+backlogItemColumns+` FROM backlog_items WHERE id = $1 FOR UPDATE`, itemID)
