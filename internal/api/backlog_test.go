@@ -297,7 +297,7 @@ func setupBacklogTestRouter() (http.Handler, *backlogMockStore) {
 	}
 	b := broker.New(ms, &mockHermes{}, &mockWarren{}, &mockForge{}, nil, cfg, logger)
 	bs := scoring.NewBacklogScorer(scoring.DefaultBacklogWeights())
-	router := NewRouter(ms, &mockHermes{}, &mockWarren{}, &mockForge{}, b, bs, cfg, "test-token", logger)
+	router := NewRouter(ms, &mockHermes{}, &mockWarren{}, &mockForge{}, b, bs, cfg, "test-admin-token", logger)
 	return router, ms
 }
 
@@ -677,7 +677,7 @@ func TestBacklogComplete(t *testing.T) {
 	_ = ms.CreateBacklogItem(context.Background(), item)
 
 	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/complete", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -699,7 +699,7 @@ func TestBacklogCompleteRejectsWrongState(t *testing.T) {
 	_ = ms.CreateBacklogItem(context.Background(), item)
 
 	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/complete", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -937,7 +937,7 @@ func TestFullBacklogLifecycle(t *testing.T) {
 
 	// 6. Complete
 	req = httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/complete", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -971,8 +971,7 @@ func TestCreateOverrideWithAdminToken(t *testing.T) {
 
 	body := `{"override_type":"priority","new_value":"0.9","overridden_by":"mike","reason":"urgent customer request"}`
 	req := httptest.NewRequest("POST", "/api/v1/overrides", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
@@ -1003,8 +1002,7 @@ func TestAutonomyMetricsWithAdminToken(t *testing.T) {
 	router, _ := setupBacklogTestRouter()
 
 	req := httptest.NewRequest("GET", "/api/v1/autonomy/metrics?days=7", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -1103,3 +1101,13 @@ func TestBacklogNextWithModelTierRouting(t *testing.T) {
 		}
 	}
 }
+
+// Add missing autonomy methods to backlogMockStore  
+func (m *backlogMockStore) GetAutonomyConfig(ctx context.Context, tier string) (*store.AutonomyConfig, error) { return nil, nil }
+func (m *backlogMockStore) UpdateAutonomyConfig(ctx context.Context, tier string, autoApprove bool, consecutiveApprovals, consecutiveCorrections int) error { return nil }
+func (m *backlogMockStore) IncrementConsecutiveApprovals(ctx context.Context, tier string) (int, error) { return 0, nil }
+func (m *backlogMockStore) IncrementConsecutiveCorrections(ctx context.Context, tier string) (int, error) { return 0, nil }
+func (m *backlogMockStore) ResetAutonomyCounters(ctx context.Context, tier string) error { return nil }
+func (m *backlogMockStore) SubmitEvidence(ctx context.Context, itemID uuid.UUID, stage, criterion, evidence, submittedBy string) error { return nil }
+func (m *backlogMockStore) ResetStageToActive(ctx context.Context, itemID uuid.UUID, stage string) error { return nil }
+

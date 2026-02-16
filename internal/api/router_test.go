@@ -347,3 +347,13 @@ func TestCompleteTask(t *testing.T) {
 		t.Errorf("expected completed, got %s", updated.Status)
 	}
 }
+
+// Add missing autonomy methods to existing mockStore
+func (m *mockStore) GetAutonomyConfig(ctx context.Context, tier string) (*store.AutonomyConfig, error) { return nil, nil }
+func (m *mockStore) UpdateAutonomyConfig(ctx context.Context, tier string, autoApprove bool, consecutiveApprovals, consecutiveCorrections int) error { return nil }
+func (m *mockStore) IncrementConsecutiveApprovals(ctx context.Context, tier string) (int, error) { return 0, nil }
+func (m *mockStore) IncrementConsecutiveCorrections(ctx context.Context, tier string) (int, error) { return 0, nil }
+func (m *mockStore) ResetAutonomyCounters(ctx context.Context, tier string) error { return nil }
+func (m *mockStore) SubmitEvidence(ctx context.Context, itemID uuid.UUID, stage, criterion, evidence, submittedBy string) error { return nil }
+func (m *mockStore) ResetStageToActive(ctx context.Context, itemID uuid.UUID, stage string) error { return nil }
+

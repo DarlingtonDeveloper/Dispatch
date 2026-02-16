@@ -44,3 +44,13 @@ func SubjectStageCompleted(itemID string) string  { return "swarm.dispatch." + i
 
 // Override subjects
 func SubjectOverrideRecorded(overrideID string) string { return "swarm.override." + overrideID + ".recorded" }
+
+// Gate approval workflow subjects  
+func SubjectGateEvidence(itemID string) string       { return "swarm.dispatch." + itemID + ".gate.evidence" }
+func SubjectGateChangesRequested(itemID string) string { return "swarm.dispatch." + itemID + ".gate.changes_requested" }
+func SubjectItemCompleted(itemID string) string      { return "swarm.dispatch." + itemID + ".item.completed" }
+func SubjectItemBlocked(itemID string) string        { return "swarm.dispatch." + itemID + ".item.blocked" }
+
+// Autonomy graduation subjects
+func SubjectAutonomyGraduated() string { return "swarm.dispatch.autonomy.graduated" }
+func SubjectAutonomyRevoked() string   { return "swarm.dispatch.autonomy.revoked" }

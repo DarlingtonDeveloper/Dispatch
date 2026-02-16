@@ -53,51 +53,59 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(AgentIDMiddleware)
+		// Agent endpoints - require X-Agent-ID header
+		r.Group(func(r chi.Router) {
+			r.Use(AgentIDMiddleware)
 
-		// Tasks
-		r.Post("/tasks", tasks.Create)
-		r.Get("/tasks", tasks.List)
-		r.Get("/tasks/{id}", tasks.Get)
-		r.Patch("/tasks/{id}", tasks.Update)
-		r.Post("/tasks/{id}/complete", tasks.Complete)
-		r.Post("/tasks/{id}/fail", tasks.Fail)
-		r.Post("/tasks/{id}/progress", tasks.Progress)
-		r.Patch("/tasks/{id}/discovery-complete", tasks.DiscoveryComplete)
+			// Tasks
+			r.Post("/tasks", tasks.Create)
+			r.Get("/tasks", tasks.List)
+			r.Get("/tasks/{id}", tasks.Get)
+			r.Patch("/tasks/{id}", tasks.Update)
+			r.Post("/tasks/{id}/complete", tasks.Complete)
+			r.Post("/tasks/{id}/fail", tasks.Fail)
+			r.Post("/tasks/{id}/progress", tasks.Progress)
+			r.Patch("/tasks/{id}/discovery-complete", tasks.DiscoveryComplete)
 
-		// Scoring
-		r.Get("/scoring/explain/{task_id}", explain.Explain)
+			// Scoring
+			r.Get("/scoring/explain/{task_id}", explain.Explain)
 
-		// Backlog
-		r.Post("/backlog", backlog.Create)
-		r.Get("/backlog", backlog.List)
-		r.Get("/backlog/next", backlog.Next)
-		r.Get("/backlog/{id}", backlog.Get)
-		r.Patch("/backlog/{id}", backlog.Update)
-		r.Delete("/backlog/{id}", backlog.Delete)
-		r.Post("/backlog/{id}/start", backlog.Start)
-		r.Patch("/backlog/{id}/discovery-complete", backlog.DiscoveryComplete)
-		r.Post("/backlog/{id}/begin-execution", backlog.BeginExecution)
-		r.Post("/backlog/{id}/complete", backlog.Complete)
-		r.Post("/backlog/{id}/block", backlog.Block)
-		r.Post("/backlog/{id}/park", backlog.Park)
+			// Backlog
+			r.Post("/backlog", backlog.Create)
+			r.Get("/backlog", backlog.List)
+			r.Get("/backlog/next", backlog.Next)
+			r.Get("/backlog/{id}", backlog.Get)
+			r.Patch("/backlog/{id}", backlog.Update)
+			r.Delete("/backlog/{id}", backlog.Delete)
+			r.Post("/backlog/{id}/start", backlog.Start)
+			r.Patch("/backlog/{id}/discovery-complete", backlog.DiscoveryComplete)
+			r.Post("/backlog/{id}/begin-execution", backlog.BeginExecution)
+			r.Post("/backlog/{id}/block", backlog.Block)
+			r.Post("/backlog/{id}/park", backlog.Park)
 
-		// Stages
-		r.Post("/backlog/{id}/init-stages", stages.InitStages)
-		r.Post("/backlog/{id}/advance-stage", stages.AdvanceStage)
-		r.Post("/backlog/{id}/gate/satisfy", stages.SatisfyGate)
-		r.Get("/backlog/{id}/gate/status", stages.GateStatus)
+			// Stages - accessible to agents
+			r.Post("/backlog/{id}/init-stages", stages.InitStages)
+			r.Get("/backlog/{id}/gate/status", stages.GateStatus)
+			r.Post("/backlog/{id}/gate/evidence", stages.SubmitEvidence)
 
-		// Dependencies
-		r.Post("/backlog/dependencies", deps.Create)
-		r.Delete("/backlog/dependencies/{id}", deps.Delete)
-		r.Get("/backlog/{id}/dependencies", deps.ListForItem)
+			// Dependencies
+			r.Post("/backlog/dependencies", deps.Create)
+			r.Delete("/backlog/dependencies/{id}", deps.Delete)
+			r.Get("/backlog/{id}/dependencies", deps.ListForItem)
+		})
 
+		// Admin endpoints - require admin token
 		r.Group(func(r chi.Router) {
 			r.Use(AdminAuthMiddleware(adminToken))
+			
 			r.Get("/stats", admin.Stats)
 			r.Get("/agents", admin.Agents)
 			r.Post("/agents/{id}/drain", admin.Drain)
+
+			// Admin-only stage operations
+			r.Post("/backlog/{id}/gate/satisfy", stages.SatisfyGate)
+			r.Post("/backlog/{id}/gate/request-changes", stages.RequestChanges)
+			r.Post("/backlog/{id}/complete", backlog.Complete)
 
 			// Overrides and autonomy (admin only)
 			r.Post("/overrides", overrides.Create)

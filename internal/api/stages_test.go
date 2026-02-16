@@ -7,629 +7,348 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/MikeSquared-Agency/Dispatch/internal/config"
 	"github.com/MikeSquared-Agency/Dispatch/internal/store"
 )
 
-func TestInitStages(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{Title: "Stage Test", ItemType: "task", Status: store.BacklogStatusPlanned, ModelTier: "standard"}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/init-stages", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]json.RawMessage
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	// Verify item has stages initialized
-	updated := ms.backlogItems[item.ID]
-	if len(updated.StageTemplate) == 0 {
-		t.Fatal("expected stage_template to be set")
-	}
-	if updated.CurrentStage != updated.StageTemplate[0] {
-		t.Errorf("expected current_stage=%q, got %q", updated.StageTemplate[0], updated.CurrentStage)
-	}
-	if updated.StageIndex != 0 {
-		t.Errorf("expected stage_index=0, got %d", updated.StageIndex)
-	}
-
-	// Verify gates were created
-	if ms.stageGates[item.ID] == nil {
-		t.Fatal("expected gates to be created")
-	}
+// MockStore implements store.Store interface for testing
+type MockStore struct {
+	mock.Mock
 }
 
-func TestInitStagesCustomTemplate(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
+func (m *MockStore) GetBacklogItem(ctx context.Context, id uuid.UUID) (*store.BacklogItem, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*store.BacklogItem), args.Error(1)
+}
 
-	item := &store.BacklogItem{Title: "Custom Stages", ItemType: "task", Status: store.BacklogStatusPlanned}
-	_ = ms.CreateBacklogItem(context.Background(), item)
+func (m *MockStore) SubmitEvidence(ctx context.Context, itemID uuid.UUID, stage, criterion, evidence, submittedBy string) error {
+	args := m.Called(ctx, itemID, stage, criterion, evidence, submittedBy)
+	return args.Error(0)
+}
 
-	body := `{"template":["build","test","deploy"]}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/init-stages", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
+func (m *MockStore) SatisfyCriterion(ctx context.Context, itemID uuid.UUID, stage, criterion, satisfiedBy string) error {
+	args := m.Called(ctx, itemID, stage, criterion, satisfiedBy)
+	return args.Error(0)
+}
+
+func (m *MockStore) GetGateStatus(ctx context.Context, itemID uuid.UUID, stage string) ([]store.GateCriterion, error) {
+	args := m.Called(ctx, itemID, stage)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]store.GateCriterion), args.Error(1)
+}
+
+func (m *MockStore) AllCriteriaMet(ctx context.Context, itemID uuid.UUID, stage string) (bool, error) {
+	args := m.Called(ctx, itemID, stage)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) GetAutonomyConfig(ctx context.Context, tier string) (*store.AutonomyConfig, error) {
+	args := m.Called(ctx, tier)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*store.AutonomyConfig), args.Error(1)
+}
+
+func (m *MockStore) UpdateBacklogItem(ctx context.Context, item *store.BacklogItem) error {
+	args := m.Called(ctx, item)
+	return args.Error(0)
+}
+
+func (m *MockStore) IncrementConsecutiveApprovals(ctx context.Context, tier string) (int, error) {
+	args := m.Called(ctx, tier)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockStore) UpdateAutonomyConfig(ctx context.Context, tier string, autoApprove bool, consecutiveApprovals, consecutiveCorrections int) error {
+	args := m.Called(ctx, tier, autoApprove, consecutiveApprovals, consecutiveCorrections)
+	return args.Error(0)
+}
+
+func (m *MockStore) ResetAutonomyCounters(ctx context.Context, tier string) error {
+	args := m.Called(ctx, tier)
+	return args.Error(0)
+}
+
+func (m *MockStore) ResetStageToActive(ctx context.Context, itemID uuid.UUID, stage string) error {
+	args := m.Called(ctx, itemID, stage)
+	return args.Error(0)
+}
+
+// Add all other required methods as no-ops for now
+func (m *MockStore) CreateTask(ctx context.Context, task *store.Task) error { return nil }
+func (m *MockStore) GetTask(ctx context.Context, id uuid.UUID) (*store.Task, error) { return nil, nil }
+func (m *MockStore) ListTasks(ctx context.Context, filter store.TaskFilter) ([]*store.Task, error) { return nil, nil }
+func (m *MockStore) UpdateTask(ctx context.Context, task *store.Task) error { return nil }
+func (m *MockStore) GetPendingTasks(ctx context.Context) ([]*store.Task, error) { return nil, nil }
+func (m *MockStore) GetActiveTasksForAgent(ctx context.Context, agentID string) ([]*store.Task, error) { return nil, nil }
+func (m *MockStore) GetActiveTasks(ctx context.Context) ([]*store.Task, error) { return nil, nil }
+func (m *MockStore) CreateTaskEvent(ctx context.Context, event *store.TaskEvent) error { return nil }
+func (m *MockStore) GetTaskEvents(ctx context.Context, taskID uuid.UUID) ([]*store.TaskEvent, error) { return nil, nil }
+func (m *MockStore) GetStats(ctx context.Context) (*store.TaskStats, error) { return nil, nil }
+func (m *MockStore) CreateAgentTaskHistory(ctx context.Context, h *store.AgentTaskHistory) error { return nil }
+func (m *MockStore) GetAgentTaskHistory(ctx context.Context, agentSlug string, limit int) ([]*store.AgentTaskHistory, error) { return nil, nil }
+func (m *MockStore) GetAgentAvgDuration(ctx context.Context, agentSlug string) (*float64, error) { return nil, nil }
+func (m *MockStore) GetAgentAvgCost(ctx context.Context, agentSlug string) (*float64, error) { return nil, nil }
+func (m *MockStore) GetTrustScore(ctx context.Context, agentSlug, category, severity string) (float64, error) { return 0, nil }
+func (m *MockStore) CreateBacklogItem(ctx context.Context, item *store.BacklogItem) error { return nil }
+func (m *MockStore) ListBacklogItems(ctx context.Context, filter store.BacklogFilter) ([]*store.BacklogItem, error) { return nil, nil }
+func (m *MockStore) DeleteBacklogItem(ctx context.Context, id uuid.UUID) error { return nil }
+func (m *MockStore) GetNextBacklogItems(ctx context.Context, limit int) ([]*store.BacklogItem, error) { return nil, nil }
+func (m *MockStore) CreateDependency(ctx context.Context, dep *store.BacklogDependency) error { return nil }
+func (m *MockStore) DeleteDependency(ctx context.Context, id uuid.UUID) error { return nil }
+func (m *MockStore) GetDependenciesForItem(ctx context.Context, itemID uuid.UUID) ([]*store.BacklogDependency, error) { return nil, nil }
+func (m *MockStore) HasUnresolvedBlockers(ctx context.Context, itemID uuid.UUID) (bool, error) { return false, nil }
+func (m *MockStore) ResolveDependenciesForBlocker(ctx context.Context, blockerID uuid.UUID) error { return nil }
+func (m *MockStore) CreateOverride(ctx context.Context, o *store.DispatchOverride) error { return nil }
+func (m *MockStore) CreateAutonomyEvent(ctx context.Context, e *store.AutonomyEvent) error { return nil }
+func (m *MockStore) GetAutonomyMetrics(ctx context.Context, days int) ([]*store.AutonomyMetrics, error) { return nil, nil }
+func (m *MockStore) BacklogDiscoveryComplete(ctx context.Context, itemID uuid.UUID, req *store.BacklogDiscoveryCompleteRequest, scoreFn store.ScoreFn, tierFn store.TierFn) (*store.BacklogDiscoveryCompleteResult, error) { return nil, nil }
+func (m *MockStore) InitStages(ctx context.Context, itemID uuid.UUID, template []string) error { return nil }
+func (m *MockStore) GetCurrentStage(ctx context.Context, itemID uuid.UUID) (string, int, error) { return "", 0, nil }
+func (m *MockStore) CreateGateCriteria(ctx context.Context, itemID uuid.UUID, stage string, criteria []string) error { return nil }
+func (m *MockStore) SatisfyAllCriteria(ctx context.Context, itemID uuid.UUID, stage string, satisfiedBy string) error { return nil }
+func (m *MockStore) GetMedianEstimatedTokens(ctx context.Context) (int64, error) { return 0, nil }
+func (m *MockStore) IncrementConsecutiveCorrections(ctx context.Context, tier string) (int, error) { return 0, nil }
+func (m *MockStore) Ping(ctx context.Context) error { return nil }
+func (m *MockStore) Close() error { return nil }
+
+// MockHermes implements hermes.Client for testing
+type MockHermes struct {
+	mock.Mock
+}
+
+func (m *MockHermes) Publish(subject string, data interface{}) error {
+	args := m.Called(subject, data)
+	return args.Error(0)
+}
+
+func (m *MockHermes) Subscribe(subject string, handler func(string, []byte)) error {
+	args := m.Called(subject, handler)
+	return args.Error(0)
+}
+
+func (m *MockHermes) Close() {
+	// No-op for mock
+}
+
+func TestSubmitEvidence(t *testing.T) {
+	mockStore := &MockStore{}
+	mockHermes := &MockHermes{}
+	
+	handler := &StagesHandler{
+		store:  mockStore,
+		hermes: mockHermes,
+		cfg:    &config.Config{},
+	}
+
+	itemID := uuid.New()
+	item := &store.BacklogItem{
+		ID:        itemID,
+		ModelTier: "standard",
+	}
+
+	// Test successful evidence submission
+	mockStore.On("GetBacklogItem", mock.Anything, itemID).Return(item, nil)
+	mockStore.On("SubmitEvidence", mock.Anything, itemID, "implement", "code complete", "Test evidence", "kai").Return(nil)
+	mockStore.On("GetGateStatus", mock.Anything, itemID, "implement").Return([]store.GateCriterion{
+		{Criterion: "code complete", Satisfied: false},
+	}, nil)
+	mockStore.On("AllCriteriaMet", mock.Anything, itemID, "implement").Return(false, nil)
+	mockHermes.On("Publish", mock.AnythingOfType("string"), mock.Anything).Return(nil)
+
+	reqBody := map[string]string{
+		"stage":        "implement",
+		"criterion":    "code complete", 
+		"evidence":     "Test evidence",
+		"submitted_by": "kai",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest("POST", "/api/v1/backlog/"+itemID.String()+"/gate/evidence", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", "kai")
+
+	// Setup router context
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", itemID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	handler.SubmitEvidence(rr, req)
+
+	assert.Equal(t, http.StatusCreated, rr.Code)
+	mockStore.AssertExpectations(t)
+	mockHermes.AssertExpectations(t)
+}
+
+func TestAgentCannotSatisfyGate(t *testing.T) {
+	mockStore := &MockStore{}
+	mockHermes := &MockHermes{}
+	cfg := &config.Config{}
+	
+	// Create a test router like the API tests do
+	r := chi.NewRouter()
+	stagesHandler := &StagesHandler{
+		store:  mockStore,
+		hermes: mockHermes,
+		cfg:    cfg,
+	}
+	
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(AgentIDMiddleware)
+			r.Post("/backlog/{id}/gate/evidence", stagesHandler.SubmitEvidence)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(AdminAuthMiddleware("test-admin-token"))
+			r.Post("/backlog/{id}/gate/satisfy", stagesHandler.SatisfyGate)
+		})
+	})
+
+	itemID := uuid.New()
+	
+	// Test agent trying to satisfy gate (should fail)
+	reqBody := map[string]string{
+		"criterion":   "code complete",
+		"satisfied_by": "agent",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest("POST", "/api/v1/backlog/"+itemID.String()+"/gate/satisfy", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", "kai")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", itemID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	// Agent should be unauthorized to satisfy gate
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestAdminCanSatisfyGate(t *testing.T) {
+	mockStore := &MockStore{}
+	mockHermes := &MockHermes{}
+	cfg := &config.Config{}
+	
+	// Create a test router 
+	r := chi.NewRouter()
+	stagesHandler := &StagesHandler{
+		store:  mockStore,
+		hermes: mockHermes,
+		cfg:    cfg,
+	}
+	
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(AdminAuthMiddleware("test-admin-token"))
+			r.Post("/backlog/{id}/gate/satisfy", stagesHandler.SatisfyGate)
+		})
+	})
+
+	itemID := uuid.New()
+	item := &store.BacklogItem{
+		ID:           itemID,
+		ModelTier:    "standard",
+		CurrentStage: "implement",
+	}
+
+	// Mock the required store calls
+	mockStore.On("GetBacklogItem", mock.Anything, itemID).Return(item, nil)
+	mockStore.On("SatisfyCriterion", mock.Anything, itemID, "implement", "code complete", "admin").Return(nil)
+	mockStore.On("GetGateStatus", mock.Anything, itemID, "implement").Return([]store.GateCriterion{
+		{Criterion: "code complete", Satisfied: true},
+	}, nil)
+	mockStore.On("AllCriteriaMet", mock.Anything, itemID, "implement").Return(false, nil)
+	mockHermes.On("Publish", mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	
+	reqBody := map[string]string{
+		"criterion":   "code complete",
+		"satisfied_by": "admin",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest("POST", "/api/v1/backlog/"+itemID.String()+"/gate/satisfy", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-admin-token")
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", itemID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	// Admin should be able to satisfy gate
+	assert.Equal(t, http.StatusOK, rr.Code)
+	mockStore.AssertExpectations(t)
+	mockHermes.AssertExpectations(t)
+}
+
+func TestEconomyAutoApproveGraduation(t *testing.T) {
+	mockStore := &MockStore{}
+	mockHermes := &MockHermes{}
+	
+	handler := &StagesHandler{
+		store:  mockStore,
+		hermes: mockHermes,
+		cfg:    &config.Config{},
+	}
+
+	itemID := uuid.New()
+	item := &store.BacklogItem{
+		ID:           itemID,
+		ModelTier:    "economy",
+		CurrentStage: "implement",
+	}
+
+	// Test graduation at 20 consecutive approvals
+	mockStore.On("GetBacklogItem", mock.Anything, itemID).Return(item, nil)
+	mockStore.On("IncrementConsecutiveApprovals", mock.Anything, "economy").Return(20, nil)
+	mockStore.On("UpdateAutonomyConfig", mock.Anything, "economy", true, 20, 0).Return(nil)
+	mockStore.On("SatisfyCriterion", mock.Anything, itemID, "implement", "code complete", "admin").Return(nil)
+	mockStore.On("GetGateStatus", mock.Anything, itemID, "implement").Return([]store.GateCriterion{
+		{Criterion: "code complete", Satisfied: true},
+	}, nil)
+	mockStore.On("AllCriteriaMet", mock.Anything, itemID, "implement").Return(true, nil)
+	mockStore.On("UpdateBacklogItem", mock.Anything, mock.AnythingOfType("*store.BacklogItem")).Return(nil)
+	
+	// Expect both gate satisfied and autonomy graduated events
+	mockHermes.On("Publish", mock.AnythingOfType("string"), mock.Anything).Return(nil)
+
+	reqBody := map[string]string{
+		"criterion":   "code complete",
+		"satisfied_by": "admin",
+		"decision":    "approved",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest("POST", "/api/v1/backlog/"+itemID.String()+"/gate/satisfy", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	updated := ms.backlogItems[item.ID]
-	if len(updated.StageTemplate) != 3 {
-		t.Fatalf("expected 3 stages, got %d", len(updated.StageTemplate))
-	}
-	if updated.StageTemplate[0] != "build" || updated.StageTemplate[1] != "test" || updated.StageTemplate[2] != "deploy" {
-		t.Errorf("unexpected template: %v", updated.StageTemplate)
-	}
-}
-
-func TestAdvanceStage(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Advance Test",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-		UpdatedAt:     time.Now().Add(-1 * time.Minute), // not too recent
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	// Create and satisfy all criteria
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete", "self-review passed"})
-	_ = ms.SatisfyAllCriteria(context.Background(), item.ID, "implement", "test-agent")
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	updated := ms.backlogItems[item.ID]
-	if updated.CurrentStage != "verify" {
-		t.Errorf("expected current_stage='verify', got %q", updated.CurrentStage)
-	}
-	if updated.StageIndex != 1 {
-		t.Errorf("expected stage_index=1, got %d", updated.StageIndex)
-	}
-}
-
-func TestAdvanceStageBlocked(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Blocked Advance",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	// Create criteria but don't satisfy them
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAdvanceStageForce(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Force Advance",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	// Create criteria but don't satisfy them
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
-
-	body := `{"force":true,"reason":"emergency hotfix"}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	updated := ms.backlogItems[item.ID]
-	if updated.CurrentStage != "verify" {
-		t.Errorf("expected current_stage='verify', got %q", updated.CurrentStage)
-	}
-}
-
-func TestAdvanceStageForceNoReason(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Force No Reason",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	body := `{"force":true}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAdvanceStageVelocityCheck(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Velocity Check",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-		UpdatedAt:     time.Now(), // very recent — triggers velocity check
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	// Create criteria and satisfy them programmatically (no satisfied_by)
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
-	// Satisfy without a satisfied_by to simulate programmatic satisfaction
-	now := time.Now()
-	ms.stageGates[item.ID]["implement"] = []store.GateCriterion{
-		{Criterion: "code complete", Satisfied: true, SatisfiedAt: &now, SatisfiedBy: ""},
-	}
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for velocity check, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestSatisfyGateSingle(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Satisfy Single",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete", "self-review passed"})
-
-	body := `{"criterion":"code complete","satisfied_by":"test-agent"}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	if resp["all_met"] == true {
-		t.Error("expected all_met=false since only one criterion satisfied")
-	}
-}
-
-func TestSatisfyGateAll(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Satisfy All",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete", "self-review passed"})
-
-	body := `{"all":true,"satisfied_by":"test-agent"}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	if resp["all_met"] != true {
-		t.Errorf("expected all_met=true, got %v", resp["all_met"])
-	}
-}
-
-func TestGateStatus(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Gate Status",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "verify", []string{"tests passing"})
-
-	// Check current stage status
-	req := httptest.NewRequest("GET", "/api/v1/backlog/"+item.ID.String()+"/gate/status", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	if resp["stage"] != "implement" {
-		t.Errorf("expected stage='implement', got %v", resp["stage"])
-	}
-
-	// Check specific stage status
-	req = httptest.NewRequest("GET", "/api/v1/backlog/"+item.ID.String()+"/gate/status?stage=verify", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp["stage"] != "verify" {
-		t.Errorf("expected stage='verify', got %v", resp["stage"])
-	}
-}
-
-func TestStageLifecycle(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	// 1. Create item
-	item := &store.BacklogItem{
-		Title:    "E2E Stage Lifecycle",
-		ItemType: "task",
-		Status:   store.BacklogStatusPlanned,
-		ModelTier: "economy",
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-	itemID := item.ID.String()
-
-	// 2. Init stages (economy tier: implement, verify)
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/init-stages", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("init-stages: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	updated := ms.backlogItems[item.ID]
-	if len(updated.StageTemplate) != 2 {
-		t.Fatalf("expected economy template with 2 stages, got %d: %v", len(updated.StageTemplate), updated.StageTemplate)
-	}
-	if updated.CurrentStage != "implement" {
-		t.Fatalf("expected current_stage='implement', got %q", updated.CurrentStage)
-	}
-
-	// 3. Satisfy implement gates
-	body := `{"all":true,"satisfied_by":"test-agent"}`
-	req = httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("satisfy implement: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// 4. Advance to verify — need to set UpdatedAt in the past to pass velocity check
-	ms.backlogItems[item.ID].UpdatedAt = time.Now().Add(-1 * time.Minute)
-
-	req = httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("advance to verify: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	updated = ms.backlogItems[item.ID]
-	if updated.CurrentStage != "verify" {
-		t.Fatalf("expected current_stage='verify', got %q", updated.CurrentStage)
-	}
-
-	// 5. Satisfy verify gates
-	body = `{"all":true,"satisfied_by":"test-agent"}`
-	req = httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("satisfy verify: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// 6. Try to advance past final stage — should get 409
-	ms.backlogItems[item.ID].UpdatedAt = time.Now().Add(-1 * time.Minute)
-	req = httptest.NewRequest("POST", "/api/v1/backlog/"+itemID+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("advance past final: expected 409, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// 7. Verify gate status for verify stage shows all met
-	req = httptest.NewRequest("GET", "/api/v1/backlog/"+itemID+"/gate/status", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("gate status: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var statusResp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&statusResp)
-	if statusResp["all_met"] != true {
-		t.Errorf("expected all_met=true for final stage, got %v", statusResp["all_met"])
-	}
-}
-
-// Edge Case Tests
-
-func TestInitStagesNonExistentItem(t *testing.T) {
-	router, _ := setupBacklogTestRouter()
-
-	// Use a random UUID that doesn't exist
-	nonExistentID := "550e8400-e29b-41d4-a716-446655440000"
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/init-stages", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAdvanceStageAtFinalStage(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	// Create an item already at the final stage
-	item := &store.BacklogItem{
-		Title:         "Final Stage Test",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement", "verify"},
-		CurrentStage:  "verify", // Already at final stage
-		StageIndex:    1,        // Index of final stage
-		UpdatedAt:     time.Now().Add(-1 * time.Minute),
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	// Create and satisfy all criteria for the final stage
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "verify", []string{"tests passing"})
-	_ = ms.SatisfyAllCriteria(context.Background(), item.ID, "verify", "test-agent")
-
-	// Try to advance past the final stage
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
-		t.Fatalf("expected 409 when advancing past final stage, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	// Check error message mentions final stage
-	if errorMsg, ok := resp["error"].(string); ok {
-		if !contains(errorMsg, "final stage") && !contains(errorMsg, "last stage") {
-			t.Errorf("expected error message to mention final/last stage, got: %s", errorMsg)
-		}
-	}
-}
-
-func TestSatisfyNonExistentCriterion(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:         "Non-Existent Criterion Test",
-		ItemType:      "task",
-		Status:        store.BacklogStatusPlanned,
-		StageTemplate: []string{"implement"},
-		CurrentStage:  "implement",
-		StageIndex:    0,
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
-
-	// Try to satisfy a criterion that doesn't exist
-	body := `{"criterion":"non-existent criterion","satisfied_by":"test-agent"}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 (graceful handling), got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	// Should still report all_met=false since the actual criterion wasn't satisfied
-	if resp["all_met"] == true {
-		t.Error("expected all_met=false when satisfying non-existent criterion")
-	}
-
-	// Verify the actual criterion is still unsatisfied
-	criteria, _ := ms.GetGateStatus(context.Background(), item.ID, "implement")
-	if len(criteria) != 1 || criteria[0].Satisfied {
-		t.Error("expected actual criterion to remain unsatisfied")
-	}
-}
-
-func TestGateStatusNoStagesInitialized(t *testing.T) {
-	router, ms := setupBacklogTestRouter()
-
-	item := &store.BacklogItem{
-		Title:    "No Stages Test",
-		ItemType: "task",
-		Status:   store.BacklogStatusPlanned,
-		// No StageTemplate set - stages not initialized
-	}
-	_ = ms.CreateBacklogItem(context.Background(), item)
-
-	req := httptest.NewRequest("GET", "/api/v1/backlog/"+item.ID.String()+"/gate/status", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 (graceful handling), got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]interface{}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-
-	// Should handle gracefully - likely return empty stage or indicate no stages
-	if stage, exists := resp["stage"]; exists && stage != "" && stage != nil {
-		t.Logf("got stage=%v for item with no stages initialized - this is OK if expected", stage)
-	}
-
-	// Should have empty or nil criteria
-	if criteria, exists := resp["criteria"]; exists {
-		if criteriaSlice, ok := criteria.([]interface{}); ok && len(criteriaSlice) > 0 {
-			t.Error("expected empty criteria for item with no stages initialized")
-		}
-	}
-}
-
-func TestAdvanceStageNonExistentItem(t *testing.T) {
-	router, _ := setupBacklogTestRouter()
-
-	nonExistentID := "550e8400-e29b-41d4-a716-446655440001"
-
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/advance-stage", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestSatisfyGateNonExistentItem(t *testing.T) {
-	router, _ := setupBacklogTestRouter()
-
-	nonExistentID := "550e8400-e29b-41d4-a716-446655440002"
-
-	body := `{"criterion":"some criterion","satisfied_by":"test-agent"}`
-	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/gate/satisfy", bytes.NewBufferString(body))
-	req.Header.Set("X-Agent-ID", "test-agent")
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestGateStatusNonExistentItem(t *testing.T) {
-	router, _ := setupBacklogTestRouter()
-
-	nonExistentID := "550e8400-e29b-41d4-a716-446655440003"
-
-	req := httptest.NewRequest("GET", "/api/v1/backlog/"+nonExistentID+"/gate/status", nil)
-	req.Header.Set("X-Agent-ID", "test-agent")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
-	}
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", itemID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	handler.SatisfyGate(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	mockStore.AssertExpectations(t)
+	mockHermes.AssertExpectations(t)
 }

@@ -116,6 +116,15 @@ var StageTemplates = map[string][]string{
 	"premium":  {"discovery", "requirements", "planning", "design", "implement", "verify", "validate", "release"},
 }
 
+type AutonomyConfig struct {
+	ID                    int       `json:"id"`
+	Tier                  string    `json:"tier"`
+	AutoApprove           bool      `json:"auto_approve"`
+	ConsecutiveApprovals  int       `json:"consecutive_approvals"`
+	ConsecutiveCorrections int       `json:"consecutive_corrections"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
 type GateCriterion struct {
 	Criterion   string     `json:"criterion"`
 	Satisfied   bool       `json:"satisfied"`
@@ -344,6 +353,17 @@ type Store interface {
 
 	// Median tokens for scoring
 	GetMedianEstimatedTokens(ctx context.Context) (int64, error)
+
+	// Evidence operations
+	SubmitEvidence(ctx context.Context, itemID uuid.UUID, stage, criterion, evidence, submittedBy string) error
+	ResetStageToActive(ctx context.Context, itemID uuid.UUID, stage string) error
+
+	// Autonomy operations
+	GetAutonomyConfig(ctx context.Context, tier string) (*AutonomyConfig, error)
+	UpdateAutonomyConfig(ctx context.Context, tier string, autoApprove bool, consecutiveApprovals, consecutiveCorrections int) error
+	IncrementConsecutiveApprovals(ctx context.Context, tier string) (int, error)
+	IncrementConsecutiveCorrections(ctx context.Context, tier string) (int, error)
+	ResetAutonomyCounters(ctx context.Context, tier string) error
 
 	Ping(ctx context.Context) error
 	Close() error

@@ -701,3 +701,81 @@ func (s *PostgresStore) AllCriteriaMet(ctx context.Context, itemID uuid.UUID, st
 	}
 	return unmet == 0, nil
 }
+
+// SubmitEvidence adds evidence to a gate criterion
+func (s *PostgresStore) SubmitEvidence(ctx context.Context, itemID uuid.UUID, stage, criterion, evidence, submittedBy string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stage_gates SET evidence = $4, evidence_submitted_by = $5, evidence_submitted_at = NOW()
+		WHERE backlog_item_id = $1 AND stage = $2 AND criterion ILIKE '%' || $3 || '%'`,
+		itemID, stage, criterion, evidence, submittedBy,
+	)
+	return err
+}
+
+// ResetStageToActive resets a stage back to active state for rework
+func (s *PostgresStore) ResetStageToActive(ctx context.Context, itemID uuid.UUID, stage string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stage_gates SET satisfied = FALSE, satisfied_at = NULL, satisfied_by = NULL
+		WHERE backlog_item_id = $1 AND stage = $2`,
+		itemID, stage,
+	)
+	return err
+}
+
+// GetAutonomyConfig gets the autonomy configuration for a tier
+func (s *PostgresStore) GetAutonomyConfig(ctx context.Context, tier string) (*AutonomyConfig, error) {
+	var config AutonomyConfig
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, tier, auto_approve, consecutive_approvals, consecutive_corrections, updated_at
+		FROM autonomy_config WHERE tier = $1`, tier).Scan(
+		&config.ID, &config.Tier, &config.AutoApprove, 
+		&config.ConsecutiveApprovals, &config.ConsecutiveCorrections, &config.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// UpdateAutonomyConfig updates the autonomy configuration
+func (s *PostgresStore) UpdateAutonomyConfig(ctx context.Context, tier string, autoApprove bool, consecutiveApprovals, consecutiveCorrections int) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE autonomy_config SET auto_approve = $2, consecutive_approvals = $3, 
+		consecutive_corrections = $4, updated_at = NOW()
+		WHERE tier = $1`,
+		tier, autoApprove, consecutiveApprovals, consecutiveCorrections,
+	)
+	return err
+}
+
+// IncrementConsecutiveApprovals increments the consecutive approvals counter and returns the new count
+func (s *PostgresStore) IncrementConsecutiveApprovals(ctx context.Context, tier string) (int, error) {
+	var newCount int
+	err := s.pool.QueryRow(ctx, `
+		UPDATE autonomy_config SET consecutive_approvals = consecutive_approvals + 1, 
+		updated_at = NOW() WHERE tier = $1 RETURNING consecutive_approvals`,
+		tier,
+	).Scan(&newCount)
+	return newCount, err
+}
+
+// IncrementConsecutiveCorrections increments the consecutive corrections counter and returns the new count
+func (s *PostgresStore) IncrementConsecutiveCorrections(ctx context.Context, tier string) (int, error) {
+	var newCount int
+	err := s.pool.QueryRow(ctx, `
+		UPDATE autonomy_config SET consecutive_corrections = consecutive_corrections + 1, 
+		updated_at = NOW() WHERE tier = $1 RETURNING consecutive_corrections`,
+		tier,
+	).Scan(&newCount)
+	return newCount, err
+}
+
+// ResetAutonomyCounters resets both counters to 0
+func (s *PostgresStore) ResetAutonomyCounters(ctx context.Context, tier string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE autonomy_config SET consecutive_approvals = 0, consecutive_corrections = 0, 
+		updated_at = NOW() WHERE tier = $1`,
+		tier,
+	)
+	return err
+}

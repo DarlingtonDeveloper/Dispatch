@@ -123,3 +123,49 @@ type OverrideRecordedEvent struct {
 	OverriddenBy string `json:"overridden_by"`
 	NewValue     string `json:"new_value"`
 }
+
+// GateEvidenceEvent carries evidence submission for a gate criterion.
+type GateEvidenceEvent struct {
+	ItemID      string `json:"item_id"`
+	Stage       string `json:"stage"`
+	Criterion   string `json:"criterion"`
+	Evidence    string `json:"evidence"`
+	SubmittedBy string `json:"submitted_by"`
+}
+
+// GateChangesRequestedEvent carries feedback requesting changes.
+type GateChangesRequestedEvent struct {
+	ItemID      string `json:"item_id"`
+	Stage       string `json:"stage"`
+	Feedback    string `json:"feedback"`
+	RequestedBy string `json:"requested_by"`
+}
+
+// ItemCompletedEvent carries final stage completion.
+type ItemCompletedEvent struct {
+	ItemID           string `json:"item_id"`
+	Title            string `json:"title"`
+	StagesCompleted  int    `json:"stages_completed"`
+	TotalDurationMs  int64  `json:"total_duration_ms"`
+}
+
+// ItemBlockedEvent carries item blocking.
+type ItemBlockedEvent struct {
+	ItemID    string `json:"item_id"`
+	Reason    string `json:"reason"`
+	BlockedBy string `json:"blocked_by"`
+}
+
+// AutonomyGraduatedEvent carries autonomy graduation notification.
+type AutonomyGraduatedEvent struct {
+	Tier          string `json:"tier"`
+	Threshold     int    `json:"threshold"`
+	ApprovedCount int    `json:"approved_count"`
+}
+
+// AutonomyRevokedEvent carries autonomy revocation notification.
+type AutonomyRevokedEvent struct {
+	Tier            string `json:"tier"`
+	Reason          string `json:"reason"`
+	CorrectionsIn10 int    `json:"corrections_in_10"`
+}

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -121,8 +123,8 @@ func (h *StagesHandler) InitStages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AdvanceStage handles POST /api/v1/backlog/{id}/advance-stage
-func (h *StagesHandler) AdvanceStage(w http.ResponseWriter, r *http.Request) {
+// SubmitEvidence handles POST /api/v1/backlog/{id}/gate/evidence
+func (h *StagesHandler) SubmitEvidence(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
@@ -135,100 +137,66 @@ func (h *StagesHandler) AdvanceStage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(item.StageTemplate) == 0 {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "stages not initialized"})
-		return
-	}
-
 	var req struct {
-		Force  bool   `json:"force"`
-		Reason string `json:"reason"`
+		Stage       string `json:"stage"`
+		Criterion   string `json:"criterion"`
+		Evidence    string `json:"evidence"`
+		SubmittedBy string `json:"submitted_by"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-
-	if req.Force && req.Reason == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "force requires reason"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if !req.Force {
-		allMet, err := h.store.AllCriteriaMet(r.Context(), id, item.CurrentStage)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		if !allMet {
-			criteria, _ := h.store.GetGateStatus(r.Context(), id, item.CurrentStage)
-			var unmet []string
-			for _, c := range criteria {
-				if !c.Satisfied {
-					unmet = append(unmet, c.Criterion)
-				}
-			}
-			writeJSON(w, http.StatusConflict, map[string]interface{}{
-				"error":        "unmet gate criteria",
-				"unmet":        unmet,
-				"current_stage": item.CurrentStage,
-			})
-			return
-		}
-	}
-
-	// Velocity check: if stage lasted < 10s and 0 criteria were satisfied manually, reject
-	if !req.Force {
-		criteria, _ := h.store.GetGateStatus(r.Context(), id, item.CurrentStage)
-		manuallySatisfied := 0
-		for _, c := range criteria {
-			if c.Satisfied && c.SatisfiedBy != "" {
-				manuallySatisfied++
-			}
-		}
-		if manuallySatisfied == 0 && len(criteria) > 0 {
-			// Check if stage was created recently (within 10s)
-			if item.UpdatedAt.After(time.Now().Add(-10 * time.Second)) {
-				writeJSON(w, http.StatusConflict, map[string]string{"error": "velocity check failed: stage advanced too quickly with no manual gate satisfactions"})
-				return
-			}
-		}
-	}
-
-	// Check if at last stage
-	if item.StageIndex >= len(item.StageTemplate)-1 {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "already at final stage"})
+	if req.Stage == "" || req.Criterion == "" || req.Evidence == "" || req.SubmittedBy == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "stage, criterion, evidence, and submitted_by are required"})
 		return
 	}
 
-	previousStage := item.CurrentStage
-	item.StageIndex++
-	item.CurrentStage = item.StageTemplate[item.StageIndex]
-
-	if err := h.store.UpdateBacklogItem(r.Context(), item); err != nil {
+	// Submit evidence
+	if err := h.store.SubmitEvidence(r.Context(), id, req.Stage, req.Criterion, req.Evidence, req.SubmittedBy); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	if h.hermes != nil {
-		_ = h.hermes.Publish(hermes.SubjectStageAdvanced(id.String()), hermes.StageAdvancedEvent{
-			ItemID:        id.String(),
-			PreviousStage: previousStage,
-			CurrentStage:  item.CurrentStage,
-			Tier:          item.ModelTier,
-		})
-
-		// If we just advanced to the last stage, also publish completed
-		if item.StageIndex == len(item.StageTemplate)-1 {
-			_ = h.hermes.Publish(hermes.SubjectStageCompleted(id.String()), hermes.StageCompletedEvent{
-				ItemID:      id.String(),
-				Tier:        item.ModelTier,
-				TotalStages: len(item.StageTemplate),
-			})
+	// Check if this is an economy tier item with auto-approve enabled
+	if item.ModelTier == "economy" {
+		config, err := h.store.GetAutonomyConfig(r.Context(), "economy")
+		if err == nil && config.AutoApprove {
+			// Auto-satisfy this criterion
+			if err := h.store.SatisfyCriterion(r.Context(), id, req.Stage, req.Criterion, "auto-approved"); err == nil {
+				// Check if all criteria are now satisfied for auto-advance
+				allMet, _ := h.store.AllCriteriaMet(r.Context(), id, req.Stage)
+				if allMet {
+					h.handleAutoAdvance(r.Context(), item, req.Stage)
+				}
+			}
 		}
 	}
 
-	writeJSON(w, http.StatusOK, item)
+	// Publish evidence event
+	if h.hermes != nil {
+		_ = h.hermes.Publish(hermes.SubjectGateEvidence(id.String()), hermes.GateEvidenceEvent{
+			ItemID:      id.String(),
+			Stage:       req.Stage,
+			Criterion:   req.Criterion,
+			Evidence:    req.Evidence,
+			SubmittedBy: req.SubmittedBy,
+		})
+	}
+
+	// Return updated gate status
+	criteria, _ := h.store.GetGateStatus(r.Context(), id, req.Stage)
+	allMet, _ := h.store.AllCriteriaMet(r.Context(), id, req.Stage)
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"stage":    req.Stage,
+		"criteria": criteria,
+		"all_met":  allMet,
+	})
 }
 
-// SatisfyGate handles POST /api/v1/backlog/{id}/gate/satisfy
+// SatisfyGate handles POST /api/v1/backlog/{id}/gate/satisfy (Admin only)
 func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -246,6 +214,7 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 		Criterion   string `json:"criterion"`
 		All         bool   `json:"all"`
 		SatisfiedBy string `json:"satisfied_by"`
+		Decision    string `json:"decision,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -253,6 +222,29 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stage := item.CurrentStage
+	
+	// Handle economy tier autonomy counter logic
+	if item.ModelTier == "economy" {
+		if strings.ToLower(req.Decision) == "approved" {
+			// Increment consecutive approvals
+			count, err := h.store.IncrementConsecutiveApprovals(r.Context(), "economy")
+			if err == nil && count >= 20 {
+				// Graduate to auto-approve
+				h.store.UpdateAutonomyConfig(r.Context(), "economy", true, count, 0)
+				if h.hermes != nil {
+					_ = h.hermes.Publish(hermes.SubjectAutonomyGraduated(), hermes.AutonomyGraduatedEvent{
+						Tier:          "economy",
+						Threshold:     20,
+						ApprovedCount: count,
+					})
+				}
+			}
+		} else if strings.ToLower(req.Decision) == "rejected" || strings.Contains(strings.ToLower(req.Decision), "change") {
+			// Reset counter on rejection/changes
+			h.store.ResetAutonomyCounters(r.Context(), "economy")
+		}
+	}
+
 	if req.All {
 		if err := h.store.SatisfyAllCriteria(r.Context(), id, stage, req.SatisfiedBy); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -269,6 +261,7 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Publish gate satisfied event
 	if h.hermes != nil {
 		criterion := req.Criterion
 		if req.All {
@@ -282,13 +275,87 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	criteria, _ := h.store.GetGateStatus(r.Context(), id, stage)
+	// Check if all criteria are now satisfied for auto-advance
 	allMet, _ := h.store.AllCriteriaMet(r.Context(), id, stage)
+	if allMet {
+		h.handleAutoAdvance(r.Context(), item, stage)
+		// Refresh item after potential advancement
+		item, _ = h.store.GetBacklogItem(r.Context(), id)
+	}
+
+	criteria, _ := h.store.GetGateStatus(r.Context(), id, stage)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"stage":    stage,
 		"criteria": criteria,
 		"all_met":  allMet,
+		"item":     item,
+	})
+}
+
+// RequestChanges handles POST /api/v1/backlog/{id}/gate/request-changes (Admin only)
+func (h *StagesHandler) RequestChanges(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	item, err := h.store.GetBacklogItem(r.Context(), id)
+	if err != nil || item == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "item not found"})
+		return
+	}
+
+	var req struct {
+		Stage       string `json:"stage"`
+		Feedback    string `json:"feedback"`
+		RequestedBy string `json:"requested_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if req.Stage == "" {
+		req.Stage = item.CurrentStage
+	}
+
+	if req.Feedback == "" || req.RequestedBy == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "feedback and requested_by are required"})
+		return
+	}
+
+	// Reset stage to active (unsatisfy all criteria)
+	if err := h.store.ResetStageToActive(r.Context(), id, req.Stage); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Handle economy tier autonomy counter (reset on change request)
+	if item.ModelTier == "economy" {
+		h.store.ResetAutonomyCounters(r.Context(), "economy")
+	}
+
+	// Publish changes requested event
+	if h.hermes != nil {
+		_ = h.hermes.Publish(hermes.SubjectGateChangesRequested(id.String()), hermes.GateChangesRequestedEvent{
+			ItemID:      id.String(),
+			Stage:       req.Stage,
+			Feedback:    req.Feedback,
+			RequestedBy: req.RequestedBy,
+		})
+	}
+
+	// Return updated gate status
+	criteria, _ := h.store.GetGateStatus(r.Context(), id, req.Stage)
+	allMet, _ := h.store.AllCriteriaMet(r.Context(), id, req.Stage)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"stage":    req.Stage,
+		"criteria": criteria,
+		"all_met":  allMet,
+		"feedback": req.Feedback,
 	})
 }
 
@@ -327,4 +394,44 @@ func (h *StagesHandler) GateStatus(w http.ResponseWriter, r *http.Request) {
 		"criteria": criteria,
 		"all_met":  allMet,
 	})
+}
+
+// handleAutoAdvance advances to next stage when all criteria are met
+func (h *StagesHandler) handleAutoAdvance(ctx context.Context, item *store.BacklogItem, currentStage string) {
+	// Check if at last stage
+	if item.StageIndex >= len(item.StageTemplate)-1 {
+		// Mark as completed
+		item.Status = store.BacklogStatusDone
+		h.store.UpdateBacklogItem(ctx, item)
+
+		// Publish completion event
+		if h.hermes != nil {
+			_ = h.hermes.Publish(hermes.SubjectItemCompleted(item.ID.String()), hermes.ItemCompletedEvent{
+				ItemID:          item.ID.String(),
+				Title:           item.Title,
+				StagesCompleted: len(item.StageTemplate),
+				TotalDurationMs: time.Since(item.CreatedAt).Milliseconds(),
+			})
+		}
+		return
+	}
+
+	// Advance to next stage
+	previousStage := item.CurrentStage
+	item.StageIndex++
+	item.CurrentStage = item.StageTemplate[item.StageIndex]
+
+	if err := h.store.UpdateBacklogItem(ctx, item); err != nil {
+		return
+	}
+
+	// Publish stage advancement
+	if h.hermes != nil {
+		_ = h.hermes.Publish(hermes.SubjectStageAdvanced(item.ID.String()), hermes.StageAdvancedEvent{
+			ItemID:        item.ID.String(),
+			PreviousStage: previousStage,
+			CurrentStage:  item.CurrentStage,
+			Tier:          item.ModelTier,
+		})
+	}
 }
