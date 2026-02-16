@@ -351,7 +351,7 @@ func (h *StagesHandler) RequestChanges(w http.ResponseWriter, r *http.Request) {
 
 	// Handle economy tier autonomy counter (reset on change request)
 	if item.ModelTier == "economy" {
-		h.store.ResetAutonomyCounters(r.Context(), "economy")
+		_ = h.store.ResetAutonomyCounters(r.Context(), "economy")
 	}
 
 	// Publish changes requested event
