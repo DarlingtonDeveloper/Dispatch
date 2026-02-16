@@ -25,3 +25,17 @@ func SubjectTaskUnmatched(taskID string) string   { return "swarm.task." + taskI
 func SubjectDispatchAssigned(taskID string) string  { return "swarm.dispatch." + taskID + ".assigned" }
 func SubjectDispatchCompleted(taskID string) string { return "swarm.dispatch." + taskID + ".completed" }
 func SubjectDispatchOversight(taskID string) string { return "swarm.dispatch." + taskID + ".oversight" }
+
+// Backlog lifecycle subjects
+func SubjectBacklogCreated(itemID string) string   { return "swarm.backlog." + itemID + ".created" }
+func SubjectBacklogUpdated(itemID string) string   { return "swarm.backlog." + itemID + ".updated" }
+func SubjectBacklogStarted(itemID string) string   { return "swarm.backlog." + itemID + ".started" }
+func SubjectBacklogPlanned(itemID string) string   { return "swarm.backlog." + itemID + ".planned" }
+func SubjectBacklogExecuting(itemID string) string { return "swarm.backlog." + itemID + ".executing" }
+func SubjectBacklogCompleted(itemID string) string { return "swarm.backlog." + itemID + ".completed" }
+func SubjectBacklogBlocked(itemID string) string   { return "swarm.backlog." + itemID + ".blocked" }
+func SubjectBacklogParked(itemID string) string    { return "swarm.backlog." + itemID + ".parked" }
+func SubjectBacklogCancelled(itemID string) string { return "swarm.backlog." + itemID + ".cancelled" }
+
+// Override subjects
+func SubjectOverrideRecorded(overrideID string) string { return "swarm.override." + overrideID + ".recorded" }

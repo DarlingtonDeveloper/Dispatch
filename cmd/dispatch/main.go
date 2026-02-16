@@ -17,6 +17,7 @@ import (
 	"github.com/MikeSquared-Agency/Dispatch/internal/config"
 	"github.com/MikeSquared-Agency/Dispatch/internal/forge"
 	"github.com/MikeSquared-Agency/Dispatch/internal/hermes"
+	"github.com/MikeSquared-Agency/Dispatch/internal/scoring"
 	"github.com/MikeSquared-Agency/Dispatch/internal/store"
 	"github.com/MikeSquared-Agency/Dispatch/internal/warren"
 )
@@ -77,8 +78,16 @@ func main() {
 	// Subscribe to NATS events for bookkeeping
 	b.SetupSubscriptions()
 
+	// Backlog scorer
+	backlogScorer := scoring.NewBacklogScorer(scoring.BacklogWeightSet{
+		BusinessImpact:      cfg.Scoring.BacklogWeights.BusinessImpact,
+		DependencyReadiness: cfg.Scoring.BacklogWeights.DependencyReadiness,
+		Urgency:             cfg.Scoring.BacklogWeights.Urgency,
+		CostEfficiency:      cfg.Scoring.BacklogWeights.CostEfficiency,
+	})
+
 	// API server
-	router := api.NewRouter(db, hermesClient, warrenClient, forgeClient, b, cfg, cfg.Server.AdminToken, logger)
+	router := api.NewRouter(db, hermesClient, warrenClient, forgeClient, b, backlogScorer, cfg, cfg.Server.AdminToken, logger)
 	apiServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler: router,

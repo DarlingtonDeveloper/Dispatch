@@ -51,7 +51,7 @@ func (c *NATSClient) ensureStream(ctx context.Context) error {
 	maxAge, _ := time.ParseDuration(StreamMaxAge)
 	_, err := c.js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:     StreamName,
-		Subjects: []string{"swarm.task.>", "swarm.dispatch.>"},
+		Subjects: []string{"swarm.task.>", "swarm.dispatch.>", "swarm.backlog.>", "swarm.override.>"},
 		MaxAge:   maxAge,
 	})
 	return err

@@ -116,6 +116,50 @@ func (m *mockStore) GetTrustScore(_ context.Context, slug, category, severity st
 	}
 	return 0.0, nil
 }
+// Backlog interface stubs
+func (m *mockStore) CreateBacklogItem(_ context.Context, item *store.BacklogItem) error {
+	item.ID = uuid.New()
+	return nil
+}
+func (m *mockStore) GetBacklogItem(_ context.Context, _ uuid.UUID) (*store.BacklogItem, error) {
+	return nil, nil
+}
+func (m *mockStore) ListBacklogItems(_ context.Context, _ store.BacklogFilter) ([]*store.BacklogItem, error) {
+	return nil, nil
+}
+func (m *mockStore) UpdateBacklogItem(_ context.Context, _ *store.BacklogItem) error { return nil }
+func (m *mockStore) DeleteBacklogItem(_ context.Context, _ uuid.UUID) error          { return nil }
+func (m *mockStore) GetNextBacklogItems(_ context.Context, _ int) ([]*store.BacklogItem, error) {
+	return nil, nil
+}
+func (m *mockStore) CreateDependency(_ context.Context, dep *store.BacklogDependency) error {
+	dep.ID = uuid.New()
+	return nil
+}
+func (m *mockStore) DeleteDependency(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockStore) GetDependenciesForItem(_ context.Context, _ uuid.UUID) ([]*store.BacklogDependency, error) {
+	return nil, nil
+}
+func (m *mockStore) HasUnresolvedBlockers(_ context.Context, _ uuid.UUID) (bool, error) {
+	return false, nil
+}
+func (m *mockStore) ResolveDependenciesForBlocker(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockStore) CreateOverride(_ context.Context, o *store.DispatchOverride) error {
+	o.ID = uuid.New()
+	return nil
+}
+func (m *mockStore) CreateAutonomyEvent(_ context.Context, e *store.AutonomyEvent) error {
+	e.ID = uuid.New()
+	return nil
+}
+func (m *mockStore) GetAutonomyMetrics(_ context.Context, _ int) ([]*store.AutonomyMetrics, error) {
+	return nil, nil
+}
+func (m *mockStore) BacklogDiscoveryComplete(_ context.Context, _ uuid.UUID, _ *store.BacklogDiscoveryCompleteRequest, _ store.ScoreFn, _ store.TierFn) (*store.BacklogDiscoveryCompleteResult, error) {
+	return &store.BacklogDiscoveryCompleteResult{}, nil
+}
+func (m *mockStore) GetMedianEstimatedTokens(_ context.Context) (int64, error) { return 0, nil }
+
 func (m *mockStore) Close() error { return nil }
 
 type mockHermes struct {

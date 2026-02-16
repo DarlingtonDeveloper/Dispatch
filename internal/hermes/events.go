@@ -74,3 +74,28 @@ type OversightSetEvent struct {
 	TaskID         string `json:"task_id"`
 	OversightLevel string `json:"oversight_level"`
 }
+
+// BacklogItemEvent carries a backlog item lifecycle transition.
+type BacklogItemEvent struct {
+	ItemID string `json:"item_id"`
+	Status string `json:"status"`
+	Title  string `json:"title"`
+}
+
+// BacklogDiscoveryCompleteEvent carries the results of a discovery-complete transition.
+type BacklogDiscoveryCompleteEvent struct {
+	ItemID        string   `json:"item_id"`
+	Status        string   `json:"status"`
+	PreviousScore *float64 `json:"previous_score,omitempty"`
+	UpdatedScore  *float64 `json:"updated_score,omitempty"`
+	ModelTier     string   `json:"model_tier,omitempty"`
+	SubtaskCount  int      `json:"subtask_count"`
+}
+
+// OverrideRecordedEvent carries a human override event.
+type OverrideRecordedEvent struct {
+	OverrideID   string `json:"override_id"`
+	OverrideType string `json:"override_type"`
+	OverriddenBy string `json:"overridden_by"`
+	NewValue     string `json:"new_value"`
+}

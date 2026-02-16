@@ -58,9 +58,17 @@ type AssignmentConfig struct {
 }
 
 type ScoringConfig struct {
-	Weights         ScoringWeights `yaml:"weights"`
-	FastPathEnabled bool           `yaml:"fast_path_enabled"`
-	ParetoEnabled   bool           `yaml:"pareto_enabled"`
+	Weights              ScoringWeights        `yaml:"weights"`
+	BacklogWeights       BacklogScoringWeights `yaml:"backlog_weights"`
+	FastPathEnabled      bool                  `yaml:"fast_path_enabled"`
+	ParetoEnabled        bool                  `yaml:"pareto_enabled"`
+}
+
+type BacklogScoringWeights struct {
+	BusinessImpact      float64 `yaml:"business_impact"`
+	DependencyReadiness float64 `yaml:"dependency_readiness"`
+	Urgency             float64 `yaml:"urgency"`
+	CostEfficiency      float64 `yaml:"cost_efficiency"`
 }
 
 type ScoringWeights struct {
@@ -152,6 +160,12 @@ func Load(path string) (*Config, error) {
 			OwnerFilterEnabled:    true,
 		},
 		Scoring: ScoringConfig{
+			BacklogWeights: BacklogScoringWeights{
+				BusinessImpact:      0.30,
+				DependencyReadiness: 0.25,
+				Urgency:             0.25,
+				CostEfficiency:      0.20,
+			},
 			Weights: ScoringWeights{
 				Capability:     0.20,
 				Availability:   0.10,
