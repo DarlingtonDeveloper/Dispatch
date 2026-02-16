@@ -247,7 +247,7 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 			count, err := h.store.IncrementConsecutiveApprovals(r.Context(), "economy")
 			if err == nil && count >= 20 {
 				// Graduate to auto-approve
-				h.store.UpdateAutonomyConfig(r.Context(), "economy", true, count, 0)
+				_ = h.store.UpdateAutonomyConfig(r.Context(), "economy", true, count, 0)
 				if h.hermes != nil {
 					_ = h.hermes.Publish(hermes.SubjectAutonomyGraduated(), hermes.AutonomyGraduatedEvent{
 						Tier:          "economy",
@@ -258,7 +258,7 @@ func (h *StagesHandler) SatisfyGate(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if strings.ToLower(req.Decision) == "rejected" || strings.Contains(strings.ToLower(req.Decision), "change") {
 			// Reset counter on rejection/changes
-			h.store.ResetAutonomyCounters(r.Context(), "economy")
+			_ = h.store.ResetAutonomyCounters(r.Context(), "economy")
 		}
 	}
 
@@ -419,7 +419,7 @@ func (h *StagesHandler) handleAutoAdvance(ctx context.Context, item *store.Backl
 	if item.StageIndex >= len(item.StageTemplate)-1 {
 		// Mark as completed
 		item.Status = store.BacklogStatusDone
-		h.store.UpdateBacklogItem(ctx, item)
+		_ = h.store.UpdateBacklogItem(ctx, item)
 
 		// Publish completion event
 		if h.hermes != nil {
