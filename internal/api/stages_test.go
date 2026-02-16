@@ -444,3 +444,192 @@ func TestStageLifecycle(t *testing.T) {
 		t.Errorf("expected all_met=true for final stage, got %v", statusResp["all_met"])
 	}
 }
+
+// Edge Case Tests
+
+func TestInitStagesNonExistentItem(t *testing.T) {
+	router, _ := setupBacklogTestRouter()
+
+	// Use a random UUID that doesn't exist
+	nonExistentID := "550e8400-e29b-41d4-a716-446655440000"
+
+	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/init-stages", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAdvanceStageAtFinalStage(t *testing.T) {
+	router, ms := setupBacklogTestRouter()
+
+	// Create an item already at the final stage
+	item := &store.BacklogItem{
+		Title:         "Final Stage Test",
+		ItemType:      "task",
+		Status:        store.BacklogStatusPlanned,
+		StageTemplate: []string{"implement", "verify"},
+		CurrentStage:  "verify", // Already at final stage
+		StageIndex:    1,        // Index of final stage
+		UpdatedAt:     time.Now().Add(-1 * time.Minute),
+	}
+	_ = ms.CreateBacklogItem(context.Background(), item)
+
+	// Create and satisfy all criteria for the final stage
+	_ = ms.CreateGateCriteria(context.Background(), item.ID, "verify", []string{"tests passing"})
+	_ = ms.SatisfyAllCriteria(context.Background(), item.ID, "verify", "test-agent")
+
+	// Try to advance past the final stage
+	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/advance-stage", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when advancing past final stage, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+
+	// Check error message mentions final stage
+	if errorMsg, ok := resp["error"].(string); ok {
+		if !contains(errorMsg, "final stage") && !contains(errorMsg, "last stage") {
+			t.Errorf("expected error message to mention final/last stage, got: %s", errorMsg)
+		}
+	}
+}
+
+func TestSatisfyNonExistentCriterion(t *testing.T) {
+	router, ms := setupBacklogTestRouter()
+
+	item := &store.BacklogItem{
+		Title:         "Non-Existent Criterion Test",
+		ItemType:      "task",
+		Status:        store.BacklogStatusPlanned,
+		StageTemplate: []string{"implement"},
+		CurrentStage:  "implement",
+		StageIndex:    0,
+	}
+	_ = ms.CreateBacklogItem(context.Background(), item)
+	_ = ms.CreateGateCriteria(context.Background(), item.ID, "implement", []string{"code complete"})
+
+	// Try to satisfy a criterion that doesn't exist
+	body := `{"criterion":"non-existent criterion","satisfied_by":"test-agent"}`
+	req := httptest.NewRequest("POST", "/api/v1/backlog/"+item.ID.String()+"/gate/satisfy", bytes.NewBufferString(body))
+	req.Header.Set("X-Agent-ID", "test-agent")
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (graceful handling), got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+
+	// Should still report all_met=false since the actual criterion wasn't satisfied
+	if resp["all_met"] == true {
+		t.Error("expected all_met=false when satisfying non-existent criterion")
+	}
+
+	// Verify the actual criterion is still unsatisfied
+	criteria, _ := ms.GetGateStatus(context.Background(), item.ID, "implement")
+	if len(criteria) != 1 || criteria[0].Satisfied {
+		t.Error("expected actual criterion to remain unsatisfied")
+	}
+}
+
+func TestGateStatusNoStagesInitialized(t *testing.T) {
+	router, ms := setupBacklogTestRouter()
+
+	item := &store.BacklogItem{
+		Title:    "No Stages Test",
+		ItemType: "task",
+		Status:   store.BacklogStatusPlanned,
+		// No StageTemplate set - stages not initialized
+	}
+	_ = ms.CreateBacklogItem(context.Background(), item)
+
+	req := httptest.NewRequest("GET", "/api/v1/backlog/"+item.ID.String()+"/gate/status", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (graceful handling), got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+
+	// Should handle gracefully - likely return empty stage or indicate no stages
+	if stage, exists := resp["stage"]; exists && stage != "" && stage != nil {
+		t.Logf("got stage=%v for item with no stages initialized - this is OK if expected", stage)
+	}
+
+	// Should have empty or nil criteria
+	if criteria, exists := resp["criteria"]; exists {
+		if criteriaSlice, ok := criteria.([]interface{}); ok && len(criteriaSlice) > 0 {
+			t.Error("expected empty criteria for item with no stages initialized")
+		}
+	}
+}
+
+func TestAdvanceStageNonExistentItem(t *testing.T) {
+	router, _ := setupBacklogTestRouter()
+
+	nonExistentID := "550e8400-e29b-41d4-a716-446655440001"
+
+	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/advance-stage", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSatisfyGateNonExistentItem(t *testing.T) {
+	router, _ := setupBacklogTestRouter()
+
+	nonExistentID := "550e8400-e29b-41d4-a716-446655440002"
+
+	body := `{"criterion":"some criterion","satisfied_by":"test-agent"}`
+	req := httptest.NewRequest("POST", "/api/v1/backlog/"+nonExistentID+"/gate/satisfy", bytes.NewBufferString(body))
+	req.Header.Set("X-Agent-ID", "test-agent")
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGateStatusNonExistentItem(t *testing.T) {
+	router, _ := setupBacklogTestRouter()
+
+	nonExistentID := "550e8400-e29b-41d4-a716-446655440003"
+
+	req := httptest.NewRequest("GET", "/api/v1/backlog/"+nonExistentID+"/gate/status", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent item, got %d: %s", w.Code, w.Body.String())
+	}
+}
