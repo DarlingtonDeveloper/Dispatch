@@ -217,6 +217,9 @@ func (m *mockForge) GetAgentsByCapability(_ context.Context, scope string) ([]fo
 	}
 	return out, nil
 }
+func (m *mockForge) GetModelEffectiveness(_ context.Context) (map[string]forge.ModelTierStats, error) {
+	return nil, nil
+}
 
 type mockAlexandria struct {
 	devices []alexandria.Device

@@ -261,3 +261,131 @@ func TestDeriveModelTier_TierModels(t *testing.T) {
 		t.Errorf("expected opus model, got %s", tier.Models[0])
 	}
 }
+
+// --- Effectiveness Safety Net Tests ---
+
+func TestApplyEffectivenessSafetyNet_EconomyPromotedToStandard(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}, RoutingMethod: "cold_start"}
+	effectiveness := map[string]EffectivenessStats{
+		"economy": {CorrectionRate: 0.65, AvgEffectiveness: 0.60, SessionCount: 50},
+	}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if !result.Promoted {
+		t.Fatal("expected promotion")
+	}
+	if promoted.Name != "standard" {
+		t.Errorf("expected standard, got %s", promoted.Name)
+	}
+	if promoted.RoutingMethod != "cold_start" {
+		t.Errorf("expected routing method preserved as cold_start, got %s", promoted.RoutingMethod)
+	}
+	if result.OriginalTier != "economy" {
+		t.Errorf("expected original tier economy, got %s", result.OriginalTier)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_EconomyNotPromoted(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}, RoutingMethod: "cold_start"}
+	effectiveness := map[string]EffectivenessStats{
+		"economy": {CorrectionRate: 0.15, AvgEffectiveness: 0.72, SessionCount: 45},
+	}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("should not promote when correction rate is low")
+	}
+	if promoted.Name != "economy" {
+		t.Errorf("expected economy, got %s", promoted.Name)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_StandardPromotedToPremium(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}, RoutingMethod: "learned"}
+	effectiveness := map[string]EffectivenessStats{
+		"standard": {CorrectionRate: 0.85, AvgEffectiveness: 0.50, SessionCount: 100},
+	}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if !result.Promoted {
+		t.Fatal("expected promotion")
+	}
+	if promoted.Name != "premium" {
+		t.Errorf("expected premium, got %s", promoted.Name)
+	}
+	if promoted.RoutingMethod != "learned" {
+		t.Errorf("expected routing method preserved as learned, got %s", promoted.RoutingMethod)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_StandardNotPromoted(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}, RoutingMethod: "cold_start"}
+	effectiveness := map[string]EffectivenessStats{
+		"standard": {CorrectionRate: 0.08, AvgEffectiveness: 0.85, SessionCount: 120},
+	}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("should not promote when correction rate is within threshold")
+	}
+	if promoted.Name != "standard" {
+		t.Errorf("expected standard, got %s", promoted.Name)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_PremiumNeverPromoted(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "premium", Models: []string{"claude-opus-4-6"}, RoutingMethod: "cold_start"}
+	effectiveness := map[string]EffectivenessStats{
+		"premium": {CorrectionRate: 0.95, AvgEffectiveness: 0.20, SessionCount: 30},
+	}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("premium should never be promoted further")
+	}
+	if promoted.Name != "premium" {
+		t.Errorf("expected premium, got %s", promoted.Name)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_NoEffectivenessData(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}, RoutingMethod: "cold_start"}
+	effectiveness := map[string]EffectivenessStats{}
+	promoted, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("should not promote when no effectiveness data available")
+	}
+	if promoted.Name != "economy" {
+		t.Errorf("expected economy, got %s", promoted.Name)
+	}
+	if result.Reason != "no effectiveness data" {
+		t.Errorf("expected reason 'no effectiveness data', got %s", result.Reason)
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_BoundaryEconomy(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "economy", RoutingMethod: "cold_start"}
+	// Exactly at threshold (0.6) should NOT trigger promotion
+	effectiveness := map[string]EffectivenessStats{
+		"economy": {CorrectionRate: 0.6, AvgEffectiveness: 0.70, SessionCount: 40},
+	}
+	_, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("exactly at threshold should not promote (must be > 0.6)")
+	}
+}
+
+func TestApplyEffectivenessSafetyNet_BoundaryStandard(t *testing.T) {
+	cfg := testConfig()
+	tier := ModelTier{Name: "standard", RoutingMethod: "cold_start"}
+	// Exactly at threshold (0.8) should NOT trigger promotion
+	effectiveness := map[string]EffectivenessStats{
+		"standard": {CorrectionRate: 0.8, AvgEffectiveness: 0.70, SessionCount: 100},
+	}
+	_, result := ApplyEffectivenessSafetyNet(tier, effectiveness, cfg.Tiers)
+	if result.Promoted {
+		t.Fatal("exactly at threshold should not promote (must be > 0.8)")
+	}
+}

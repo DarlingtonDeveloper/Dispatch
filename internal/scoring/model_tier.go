@@ -1,6 +1,7 @@
 package scoring
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/MikeSquared-Agency/Dispatch/internal/config"
@@ -176,4 +177,62 @@ func matchesAnyGlob(filename string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// EffectivenessStats mirrors forge.ModelTierStats to avoid a circular import.
+type EffectivenessStats struct {
+	CorrectionRate   float64
+	AvgEffectiveness float64
+	SessionCount     int
+}
+
+// EffectivenessSafetyNetResult captures whether a tier was promoted and why.
+type EffectivenessSafetyNetResult struct {
+	Promoted     bool
+	OriginalTier string
+	NewTier      string
+	Reason       string
+}
+
+// ApplyEffectivenessSafetyNet checks correction rate for the chosen tier and
+// auto-promotes if the tier is performing poorly. This acts as a safety net:
+//   - economy with correction_rate > 0.6 → promote to standard
+//   - standard with correction_rate > 0.8 → promote to premium
+//
+// Premium is never promoted further. Tiers without effectiveness data are left unchanged.
+func ApplyEffectivenessSafetyNet(tier ModelTier, effectiveness map[string]EffectivenessStats, tiers []config.ModelTierDef) (ModelTier, EffectivenessSafetyNetResult) {
+	result := EffectivenessSafetyNetResult{
+		OriginalTier: tier.Name,
+		NewTier:      tier.Name,
+	}
+
+	stats, ok := effectiveness[tier.Name]
+	if !ok {
+		result.Reason = "no effectiveness data"
+		return tier, result
+	}
+
+	switch tier.Name {
+	case "economy":
+		if stats.CorrectionRate > 0.6 {
+			promoted := tierByName("standard", tiers)
+			promoted.RoutingMethod = tier.RoutingMethod
+			result.Promoted = true
+			result.NewTier = "standard"
+			result.Reason = fmt.Sprintf("economy correction_rate %.2f > 0.6, promoting to standard", stats.CorrectionRate)
+			return promoted, result
+		}
+	case "standard":
+		if stats.CorrectionRate > 0.8 {
+			promoted := tierByName("premium", tiers)
+			promoted.RoutingMethod = tier.RoutingMethod
+			result.Promoted = true
+			result.NewTier = "premium"
+			result.Reason = fmt.Sprintf("standard correction_rate %.2f > 0.8, promoting to premium", stats.CorrectionRate)
+			return promoted, result
+		}
+	}
+
+	result.Reason = fmt.Sprintf("correction_rate %.2f within threshold", stats.CorrectionRate)
+	return tier, result
 }

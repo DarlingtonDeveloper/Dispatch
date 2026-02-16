@@ -243,6 +243,10 @@ func (b *Broker) assignTask(ctx context.Context, task *store.Task) error {
 	// Derive model tier after scoring
 	if b.cfg.ModelRouting.Enabled {
 		tier := scoring.DeriveModelTier(task, b.cfg.ModelRouting, false)
+
+		// Apply effectiveness safety net: auto-promote tiers with high correction rates
+		b.applyEffectivenessSafetyNet(ctx, &tier, task)
+
 		runtime := scoring.RuntimeForTier(tier.Name, len(task.FilePatterns))
 		model := ""
 		if len(tier.Models) > 0 {
@@ -681,6 +685,41 @@ func (b *Broker) applyScoring(task *store.Task, result scoring.ScoringResult) {
 	}
 	factors["total_score"] = result.TotalScore
 	task.ScoringFactors = factors
+}
+
+// applyEffectivenessSafetyNet queries PromptForge for model tier effectiveness
+// and auto-promotes the tier if its correction rate is too high (safety net).
+func (b *Broker) applyEffectivenessSafetyNet(ctx context.Context, tier *scoring.ModelTier, task *store.Task) {
+	if b.forge == nil {
+		return
+	}
+
+	forgeStats, err := b.forge.GetModelEffectiveness(ctx)
+	if err != nil {
+		b.logger.Warn("failed to fetch model effectiveness from PromptForge, skipping safety net",
+			"task_id", task.ID, "error", err)
+		return
+	}
+
+	// Convert forge stats to scoring package's type to avoid circular import
+	effectiveness := make(map[string]scoring.EffectivenessStats, len(forgeStats))
+	for k, v := range forgeStats {
+		effectiveness[k] = scoring.EffectivenessStats{
+			CorrectionRate:   v.CorrectionRate,
+			AvgEffectiveness: v.AvgEffectiveness,
+			SessionCount:     v.SessionCount,
+		}
+	}
+
+	promoted, result := scoring.ApplyEffectivenessSafetyNet(*tier, effectiveness, b.cfg.ModelRouting.Tiers)
+	if result.Promoted {
+		b.logger.Info("effectiveness safety net promoted tier",
+			"task_id", task.ID,
+			"original_tier", result.OriginalTier,
+			"new_tier", result.NewTier,
+			"reason", result.Reason)
+	}
+	*tier = promoted
 }
 
 func boolPtr(b bool) *bool { return &b }

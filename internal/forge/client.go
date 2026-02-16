@@ -19,9 +19,18 @@ type Persona struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+// ModelTierStats holds effectiveness metrics for a single model tier,
+// as returned by PromptForge's /api/v1/effectiveness/model-tiers endpoint.
+type ModelTierStats struct {
+	CorrectionRate   float64 `json:"correction_rate"`
+	AvgEffectiveness float64 `json:"avg_effectiveness"`
+	SessionCount     int     `json:"session_count"`
+}
+
 type Client interface {
 	ListPersonas(ctx context.Context) ([]Persona, error)
 	GetAgentsByCapability(ctx context.Context, scope string) ([]Persona, error)
+	GetModelEffectiveness(ctx context.Context) (map[string]ModelTierStats, error)
 }
 
 type HTTPClient struct {
@@ -32,13 +41,19 @@ type HTTPClient struct {
 	cache     []Persona
 	cacheTime time.Time
 	cacheTTL  time.Duration
+
+	effectivenessMu        sync.RWMutex
+	effectivenessCache     map[string]ModelTierStats
+	effectivenessCacheTime time.Time
+	effectivenessCacheTTL  time.Duration
 }
 
 func NewHTTPClient(baseURL string) *HTTPClient {
 	return &HTTPClient{
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		cacheTTL:   60 * time.Second,
+		baseURL:               baseURL,
+		httpClient:            &http.Client{Timeout: 10 * time.Second},
+		cacheTTL:              60 * time.Second,
+		effectivenessCacheTTL: 5 * time.Minute,
 	}
 }
 
@@ -169,6 +184,50 @@ func (c *HTTPClient) GetAgentsByCapability(ctx context.Context, scope string) ([
 		}
 	}
 	return matched, nil
+}
+
+// GetModelEffectiveness fetches model tier effectiveness stats from PromptForge.
+// Results are cached with a 5-minute TTL since effectiveness data changes slowly.
+func (c *HTTPClient) GetModelEffectiveness(ctx context.Context) (map[string]ModelTierStats, error) {
+	c.effectivenessMu.RLock()
+	if c.effectivenessCache != nil && time.Since(c.effectivenessCacheTime) < c.effectivenessCacheTTL {
+		result := make(map[string]ModelTierStats, len(c.effectivenessCache))
+		for k, v := range c.effectivenessCache {
+			result[k] = v
+		}
+		c.effectivenessMu.RUnlock()
+		return result, nil
+	}
+	c.effectivenessMu.RUnlock()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/effectiveness/model-tiers", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("promptforge: %d %s", resp.StatusCode, string(body))
+	}
+
+	var stats map[string]ModelTierStats
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return nil, err
+	}
+
+	c.effectivenessMu.Lock()
+	c.effectivenessCache = stats
+	c.effectivenessCacheTime = time.Now()
+	c.effectivenessMu.Unlock()
+
+	return stats, nil
 }
 
 func ParseCapabilities(content string) []string {

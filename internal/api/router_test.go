@@ -159,6 +159,9 @@ type mockForge struct{}
 
 func (m *mockForge) ListPersonas(_ context.Context) ([]forge.Persona, error)                   { return nil, nil }
 func (m *mockForge) GetAgentsByCapability(_ context.Context, _ string) ([]forge.Persona, error) { return nil, nil }
+func (m *mockForge) GetModelEffectiveness(_ context.Context) (map[string]forge.ModelTierStats, error) {
+	return nil, nil
+}
 
 func setupTestRouter() (http.Handler, *mockStore) {
 	ms := newMockStore()
