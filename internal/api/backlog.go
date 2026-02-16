@@ -9,19 +9,29 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/MikeSquared-Agency/Dispatch/internal/config"
 	"github.com/MikeSquared-Agency/Dispatch/internal/hermes"
 	"github.com/MikeSquared-Agency/Dispatch/internal/scoring"
 	"github.com/MikeSquared-Agency/Dispatch/internal/store"
 )
 
 type BacklogHandler struct {
-	store  store.Store
-	hermes hermes.Client
-	scorer *scoring.BacklogScorer
+	store        store.Store
+	hermes       hermes.Client
+	scorer       *scoring.BacklogScorer
+	modelRouting config.ModelRoutingConfig
 }
 
-func NewBacklogHandler(s store.Store, h hermes.Client, bs *scoring.BacklogScorer) *BacklogHandler {
-	return &BacklogHandler{store: s, hermes: h, scorer: bs}
+func NewBacklogHandler(s store.Store, h hermes.Client, bs *scoring.BacklogScorer, modelRouting config.ModelRoutingConfig) *BacklogHandler {
+	return &BacklogHandler{store: s, hermes: h, scorer: bs, modelRouting: modelRouting}
+}
+
+type BacklogNextItem struct {
+	*store.BacklogItem
+	ModelTier        string `json:"model_tier"`
+	RecommendedModel string `json:"recommended_model"`
+	RoutingMethod    string `json:"routing_method"`
+	Runtime          string `json:"runtime"`
 }
 
 type CreateBacklogItemRequest struct {
@@ -156,6 +166,21 @@ func (h *BacklogHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+// backlogItemToTask converts a BacklogItem to a Task for model tier derivation
+func backlogItemToTask(item *store.BacklogItem) *store.Task {
+	return &store.Task{
+		ID:                 item.ID,
+		Title:              item.Title,
+		Description:        item.Description,
+		Labels:             item.Labels,
+		OneWayDoor:         item.OneWayDoor,
+		FilePatterns:       []string{}, // BacklogItem doesn't have FilePatterns, default to empty
+		RiskScore:          nil,        // BacklogItem doesn't have RiskScore
+		ComplexityScore:    nil,        // BacklogItem doesn't have ComplexityScore  
+		ReversibilityScore: nil,        // BacklogItem doesn't have ReversibilityScore
+	}
+}
+
 // Next handles GET /api/v1/backlog/next — live re-scoring of ready items
 func (h *BacklogHandler) Next(w http.ResponseWriter, r *http.Request) {
 	limit := 10
@@ -184,7 +209,36 @@ func (h *BacklogHandler) Next(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []*store.BacklogItem{}
 	}
-	writeJSON(w, http.StatusOK, items)
+
+	// Wrap each item with model tier information
+	result := make([]*BacklogNextItem, len(items))
+	for i, item := range items {
+		// Convert BacklogItem to Task for model tier derivation
+		task := backlogItemToTask(item)
+		
+		// Derive model tier (hasLearnedData = false for cold start)
+		tier := scoring.DeriveModelTier(task, h.modelRouting, false)
+		
+		// Get recommended model (first model in tier)
+		recommendedModel := ""
+		if len(tier.Models) > 0 {
+			recommendedModel = tier.Models[0]
+		}
+		
+		// Get runtime based on tier and file patterns count
+		runtime := scoring.RuntimeForTier(tier.Name, len(task.FilePatterns))
+		
+		// Create response item
+		result[i] = &BacklogNextItem{
+			BacklogItem:      item,
+			ModelTier:        tier.Name,
+			RecommendedModel: recommendedModel,
+			RoutingMethod:    tier.RoutingMethod,
+			Runtime:          runtime,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // Get handles GET /api/v1/backlog/{id}

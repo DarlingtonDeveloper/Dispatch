@@ -191,9 +191,9 @@ func Load(path string) (*Config, error) {
 				{Name: "architecture", Labels: []string{"architecture", "design", "refactor"}, Tier: "premium"},
 			},
 			Tiers: []ModelTierDef{
-				{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}},
-				{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}},
-				{Name: "premium", Models: []string{"claude-opus-4-6"}},
+				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
 			},
 			LearningThreshold: LearningThreshold{
 				MinTasks:     10,

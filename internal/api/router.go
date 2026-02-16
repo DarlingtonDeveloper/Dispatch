@@ -28,7 +28,7 @@ func NewRouter(s store.Store, h hermes.Client, w warren.Client, f forge.Client, 
 	tasks := NewTasksHandler(s, h, cfg.ModelRouting)
 	admin := NewAdminHandler(s, w, f, b)
 	explain := NewExplainHandler(s)
-	backlog := NewBacklogHandler(s, h, bs)
+	backlog := NewBacklogHandler(s, h, bs, cfg.ModelRouting)
 	deps := NewDependenciesHandler(s)
 	overrides := NewOverridesHandler(s, h)
 	autonomy := NewAutonomyHandler(s)

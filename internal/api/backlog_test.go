@@ -172,10 +172,15 @@ func setupBacklogTestRouter() (http.Handler, *backlogMockStore) {
 		ModelRouting: config.ModelRoutingConfig{
 			Enabled:     true,
 			DefaultTier: "standard",
+			ColdStartRules: []config.ColdStartRule{
+				{Name: "config-only", Labels: []string{"config"}, FilePatterns: []string{"*.yaml", "*.yml", "*.toml", "*.json", "*.env"}, Tier: "economy"},
+				{Name: "single-file-lint", Labels: []string{"lint", "format"}, MaxFiles: 1, Tier: "economy"},
+				{Name: "architecture", Labels: []string{"architecture", "design", "refactor"}, Tier: "premium"},
+			},
 			Tiers: []config.ModelTierDef{
-				{Name: "economy", Models: []string{"claude-haiku-4-5-20251001"}},
-				{Name: "standard", Models: []string{"claude-sonnet-4-5-20250929"}},
-				{Name: "premium", Models: []string{"claude-opus-4-6"}},
+				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
 			},
 		},
 	}
@@ -651,7 +656,7 @@ func TestBacklogNext(t *testing.T) {
 	score1 := 0.9
 	score2 := 0.5
 	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "High", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score1})
-	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Low", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score2})
+	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Low", ItemType: "task", Status: store.BacklogStatusReady, PriorityScore: &score2, OneWayDoor: true})
 	_ = ms.CreateBacklogItem(context.Background(), &store.BacklogItem{Title: "Not Ready", ItemType: "task", Status: store.BacklogStatusBacklog})
 
 	req := httptest.NewRequest("GET", "/api/v1/backlog/next", nil)
@@ -664,10 +669,39 @@ func TestBacklogNext(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var items []store.BacklogItem
+	var items []BacklogNextItem
 	_ = json.NewDecoder(w.Body).Decode(&items)
 	if len(items) != 2 {
 		t.Errorf("expected 2 ready items, got %d", len(items))
+	}
+
+	// Check model tier information is included
+	for _, item := range items {
+		if item.ModelTier == "" {
+			t.Error("expected model_tier to be set")
+		}
+		if item.RecommendedModel == "" {
+			t.Error("expected recommended_model to be set")
+		}
+		if item.RoutingMethod == "" {
+			t.Error("expected routing_method to be set")
+		}
+		if item.Runtime == "" {
+			t.Error("expected runtime to be set")
+		}
+		
+		// OneWayDoor should result in premium tier
+		if item.OneWayDoor && item.ModelTier != "premium" {
+			t.Errorf("expected one-way-door item to have premium tier, got %s", item.ModelTier)
+		}
+		
+		// Recommended model should be from the tier
+		if item.ModelTier == "premium" && item.RecommendedModel != "anthropic/claude-opus-4-20250514" {
+			t.Errorf("expected premium tier to recommend claude-opus, got %s", item.RecommendedModel)
+		}
+		if item.ModelTier == "standard" && item.RecommendedModel != "anthropic/claude-sonnet-4-20250514" {
+			t.Errorf("expected standard tier to recommend claude-sonnet, got %s", item.RecommendedModel)
+		}
 	}
 }
 
@@ -866,5 +900,95 @@ func TestAutonomyMetricsWithAdminToken(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestBacklogNextWithModelTierRouting(t *testing.T) {
+	router, ms := setupBacklogTestRouter()
+
+	// Create items with different characteristics for tier routing
+	tests := []struct {
+		name     string
+		item     *store.BacklogItem
+		wantTier string
+		wantRuntime string
+	}{
+		{
+			name:     "OneWayDoor item gets premium tier",
+			item:     &store.BacklogItem{Title: "Critical Change", ItemType: "task", Status: store.BacklogStatusReady, OneWayDoor: true},
+			wantTier: "premium",
+			wantRuntime: "openclaw",
+		},
+		{
+			name:     "Regular item gets standard tier",
+			item:     &store.BacklogItem{Title: "Regular Task", ItemType: "task", Status: store.BacklogStatusReady},
+			wantTier: "standard",
+			wantRuntime: "picoclaw", // standard with 0 file patterns gets picoclaw
+		},
+		{
+			name:     "Config-labeled item gets economy tier",
+			item:     &store.BacklogItem{Title: "Config Update", ItemType: "task", Status: store.BacklogStatusReady, Labels: []string{"config"}},
+			wantTier: "economy", // based on ColdStartRules
+			wantRuntime: "picoclaw",
+		},
+	}
+
+	// Create all test items
+	for _, test := range tests {
+		_ = ms.CreateBacklogItem(context.Background(), test.item)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/backlog/next", nil)
+	req.Header.Set("X-Agent-ID", "test-agent")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var items []BacklogNextItem
+	_ = json.NewDecoder(w.Body).Decode(&items)
+	if len(items) != len(tests) {
+		t.Fatalf("expected %d items, got %d", len(tests), len(items))
+	}
+
+	// Build a map by title to check specific items
+	itemsByTitle := make(map[string]*BacklogNextItem)
+	for i := range items {
+		itemsByTitle[items[i].Title] = &items[i]
+	}
+
+	for _, test := range tests {
+		item, found := itemsByTitle[test.item.Title]
+		if !found {
+			t.Errorf("item %q not found in response", test.item.Title)
+			continue
+		}
+
+		if item.ModelTier != test.wantTier {
+			t.Errorf("item %q: expected tier %q, got %q", test.item.Title, test.wantTier, item.ModelTier)
+		}
+
+		if item.Runtime != test.wantRuntime {
+			t.Errorf("item %q: expected runtime %q, got %q", test.item.Title, test.wantRuntime, item.Runtime)
+		}
+
+		if item.RecommendedModel == "" {
+			t.Errorf("item %q: expected recommended_model to be set", test.item.Title)
+		}
+
+		if item.RoutingMethod != "cold_start" {
+			t.Errorf("item %q: expected routing_method 'cold_start', got %q", test.item.Title, item.RoutingMethod)
+		}
+
+		// Verify the embedded BacklogItem is intact
+		if item.BacklogItem.ID != test.item.ID {
+			t.Errorf("item %q: BacklogItem ID mismatch", test.item.Title)
+		}
+		if item.BacklogItem.Title != test.item.Title {
+			t.Errorf("item %q: BacklogItem Title mismatch", test.item.Title)
+		}
 	}
 }
