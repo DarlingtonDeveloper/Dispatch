@@ -94,10 +94,12 @@ type BacklogDiscoveryCompleteEvent struct {
 
 // StageAdvancedEvent carries a stage transition.
 type StageAdvancedEvent struct {
-	ItemID        string `json:"item_id"`
-	PreviousStage string `json:"previous_stage"`
-	CurrentStage  string `json:"current_stage"`
-	Tier          string `json:"tier"`
+	ItemID       string `json:"item_id"`
+	ItemTitle    string `json:"item_title"`
+	FromStage    string `json:"from_stage"`
+	ToStage      string `json:"to_stage"`
+	StageIndex   int    `json:"stage_index"`
+	Tier         string `json:"tier"`
 }
 
 // GateSatisfiedEvent carries a gate criterion satisfaction.

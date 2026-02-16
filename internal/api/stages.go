@@ -110,10 +110,11 @@ func (h *StagesHandler) InitStages(w http.ResponseWriter, r *http.Request) {
 
 	if h.hermes != nil {
 		_ = h.hermes.Publish(hermes.SubjectStageAdvanced(id.String()), hermes.StageAdvancedEvent{
-			ItemID:        id.String(),
-			PreviousStage: "",
-			CurrentStage:  template[0],
-			Tier:          item.ModelTier,
+			ItemID:    id.String(),
+			ItemTitle: item.Title,
+			FromStage: "",
+			ToStage:   template[0],
+			Tier:      item.ModelTier,
 		})
 	}
 
@@ -444,10 +445,12 @@ func (h *StagesHandler) handleAutoAdvance(ctx context.Context, item *store.Backl
 	// Publish stage advancement
 	if h.hermes != nil {
 		_ = h.hermes.Publish(hermes.SubjectStageAdvanced(item.ID.String()), hermes.StageAdvancedEvent{
-			ItemID:        item.ID.String(),
-			PreviousStage: previousStage,
-			CurrentStage:  item.CurrentStage,
-			Tier:          item.ModelTier,
+			ItemID:     item.ID.String(),
+			ItemTitle:  item.Title,
+			FromStage:  previousStage,
+			ToStage:    item.CurrentStage,
+			StageIndex: item.StageIndex,
+			Tier:       item.ModelTier,
 		})
 	}
 }
