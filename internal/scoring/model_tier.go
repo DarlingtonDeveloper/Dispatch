@@ -139,10 +139,7 @@ func RuntimeForTier(tierName string, fileCount int) string {
 	case "economy":
 		return "picoclaw"
 	case "standard":
-		if fileCount <= 1 {
-			return "picoclaw"
-		}
-		return "openclaw"
+		return "picoclaw"
 	case "premium":
 		return "openclaw"
 	default:

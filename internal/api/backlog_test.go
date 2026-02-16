@@ -26,6 +26,7 @@ type backlogMockStore struct {
 	deps         map[uuid.UUID]*store.BacklogDependency
 	overrides    []*store.DispatchOverride
 	autoEvents   []*store.AutonomyEvent
+	stageGates   map[uuid.UUID]map[string][]store.GateCriterion
 }
 
 func newBacklogMockStore() *backlogMockStore {
@@ -33,6 +34,7 @@ func newBacklogMockStore() *backlogMockStore {
 		mockStore:    mockStore{tasks: make(map[uuid.UUID]*store.Task)},
 		backlogItems: make(map[uuid.UUID]*store.BacklogItem),
 		deps:         make(map[uuid.UUID]*store.BacklogDependency),
+		stageGates:   make(map[uuid.UUID]map[string][]store.GateCriterion),
 	}
 }
 
@@ -126,6 +128,106 @@ func (m *backlogMockStore) CreateAutonomyEvent(_ context.Context, e *store.Auton
 	return nil
 }
 
+func (m *backlogMockStore) InitStages(_ context.Context, itemID uuid.UUID, template []string) error {
+	item, ok := m.backlogItems[itemID]
+	if !ok {
+		return nil
+	}
+	item.StageTemplate = template
+	if len(template) > 0 {
+		item.CurrentStage = template[0]
+	}
+	item.StageIndex = 0
+	return nil
+}
+
+func (m *backlogMockStore) GetCurrentStage(_ context.Context, itemID uuid.UUID) (string, int, error) {
+	item, ok := m.backlogItems[itemID]
+	if !ok {
+		return "", 0, nil
+	}
+	return item.CurrentStage, item.StageIndex, nil
+}
+
+func (m *backlogMockStore) CreateGateCriteria(_ context.Context, itemID uuid.UUID, stage string, criteria []string) error {
+	if m.stageGates[itemID] == nil {
+		m.stageGates[itemID] = make(map[string][]store.GateCriterion)
+	}
+	for _, c := range criteria {
+		m.stageGates[itemID][stage] = append(m.stageGates[itemID][stage], store.GateCriterion{
+			Criterion: c,
+			Satisfied: false,
+		})
+	}
+	return nil
+}
+
+func (m *backlogMockStore) SatisfyCriterion(_ context.Context, itemID uuid.UUID, stage, criterion, satisfiedBy string) error {
+	if m.stageGates[itemID] == nil {
+		return nil
+	}
+	criteria := m.stageGates[itemID][stage]
+	now := time.Now()
+	for i := range criteria {
+		if !criteria[i].Satisfied && containsSubstring(criteria[i].Criterion, criterion) {
+			criteria[i].Satisfied = true
+			criteria[i].SatisfiedAt = &now
+			criteria[i].SatisfiedBy = satisfiedBy
+		}
+	}
+	m.stageGates[itemID][stage] = criteria
+	return nil
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(substr) > 0 && len(s) >= len(substr) && (s == substr || contains(s, substr))
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *backlogMockStore) SatisfyAllCriteria(_ context.Context, itemID uuid.UUID, stage, satisfiedBy string) error {
+	if m.stageGates[itemID] == nil {
+		return nil
+	}
+	criteria := m.stageGates[itemID][stage]
+	now := time.Now()
+	for i := range criteria {
+		if !criteria[i].Satisfied {
+			criteria[i].Satisfied = true
+			criteria[i].SatisfiedAt = &now
+			criteria[i].SatisfiedBy = satisfiedBy
+		}
+	}
+	m.stageGates[itemID][stage] = criteria
+	return nil
+}
+
+func (m *backlogMockStore) GetGateStatus(_ context.Context, itemID uuid.UUID, stage string) ([]store.GateCriterion, error) {
+	if m.stageGates[itemID] == nil {
+		return nil, nil
+	}
+	return m.stageGates[itemID][stage], nil
+}
+
+func (m *backlogMockStore) AllCriteriaMet(_ context.Context, itemID uuid.UUID, stage string) (bool, error) {
+	if m.stageGates[itemID] == nil {
+		return true, nil
+	}
+	for _, c := range m.stageGates[itemID][stage] {
+		if !c.Satisfied {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (m *backlogMockStore) BacklogDiscoveryComplete(_ context.Context, itemID uuid.UUID, req *store.BacklogDiscoveryCompleteRequest, scoreFn store.ScoreFn, tierFn store.TierFn) (*store.BacklogDiscoveryCompleteResult, error) {
 	item, ok := m.backlogItems[itemID]
 	if !ok {
@@ -181,6 +283,15 @@ func setupBacklogTestRouter() (http.Handler, *backlogMockStore) {
 				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
 				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
 				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
+			},
+		},
+		StageGates: config.StageGatesConfig{
+			Gates: map[string][]string{
+				"discovery":    {"scope defined", "risks identified"},
+				"planning":     {"tasks decomposed", "estimates provided"},
+				"implement":    {"code complete", "self-review passed"},
+				"verify":       {"tests passing", "linting clean"},
+				"validate":     {"acceptance criteria met"},
 			},
 		},
 	}

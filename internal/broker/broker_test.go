@@ -1904,3 +1904,12 @@ func TestBrokerAssignmentModelRoutingEvent(t *testing.T) {
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+// Stage engine stubs (satisfy store.Store interface)
+func (m *mockStore) InitStages(_ context.Context, _ uuid.UUID, _ []string) error { return nil }
+func (m *mockStore) GetCurrentStage(_ context.Context, _ uuid.UUID) (string, int, error) { return "", 0, nil }
+func (m *mockStore) CreateGateCriteria(_ context.Context, _ uuid.UUID, _ string, _ []string) error { return nil }
+func (m *mockStore) SatisfyCriterion(_ context.Context, _ uuid.UUID, _, _, _ string) error { return nil }
+func (m *mockStore) SatisfyAllCriteria(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
+func (m *mockStore) GetGateStatus(_ context.Context, _ uuid.UUID, _ string) ([]store.GateCriterion, error) { return nil, nil }
+func (m *mockStore) AllCriteriaMet(_ context.Context, _ uuid.UUID, _ string) (bool, error) { return true, nil }

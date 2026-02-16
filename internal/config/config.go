@@ -19,7 +19,12 @@ type Config struct {
 	Assignment   AssignmentConfig   `yaml:"assignment"`
 	Scoring      ScoringConfig      `yaml:"scoring"`
 	ModelRouting ModelRoutingConfig `yaml:"model_routing"`
+	StageGates   StageGatesConfig   `yaml:"stage_gates"`
 	Logging      LoggingConfig      `yaml:"logging"`
+}
+
+type StageGatesConfig struct {
+	Gates map[string][]string `yaml:"gates"`
 }
 
 type ServerConfig struct {
@@ -202,6 +207,18 @@ func Load(path string) (*Config, error) {
 			QualitySafetyNet: QualitySafetyNet{
 				MaxDowngradePerSession: 2,
 				MinSuccessRate:         0.8,
+			},
+		},
+		StageGates: StageGatesConfig{
+			Gates: map[string][]string{
+				"discovery":    {"scope defined", "risks identified"},
+				"requirements": {"requirements documented", "acceptance criteria defined", "stakeholder sign-off"},
+				"planning":     {"tasks decomposed", "estimates provided"},
+				"design":       {"design documented", "design reviewed"},
+				"implement":    {"code complete", "self-review passed"},
+				"verify":       {"tests passing", "linting clean"},
+				"validate":     {"acceptance criteria met", "stakeholder approval"},
+				"release":      {"changelog updated", "deployment verified"},
 			},
 		},
 		Logging: LoggingConfig{

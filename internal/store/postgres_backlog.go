@@ -14,6 +14,7 @@ const backlogItemColumns = `id, title, description, item_type, status, domain, a
 	impact, urgency, estimated_tokens, effort_estimate,
 	priority_score, scores_source,
 	model_tier, labels, one_way_door,
+	stage_template, current_stage, stage_index,
 	discovery_assessment,
 	source, metadata, created_at, updated_at`
 
@@ -21,6 +22,7 @@ func scanBacklogItem(row pgx.Row) (*BacklogItem, error) {
 	item := &BacklogItem{}
 	var description, domain, assignedTo, effortEstimate sql.NullString
 	var scoresSource, modelTier, source sql.NullString
+	var currentStage sql.NullString
 	var impact, urgency, priorityScore sql.NullFloat64
 	var estimatedTokens sql.NullInt64
 	var oneWayDoor sql.NullBool
@@ -32,11 +34,16 @@ func scanBacklogItem(row pgx.Row) (*BacklogItem, error) {
 		&impact, &urgency, &estimatedTokens, &effortEstimate,
 		&priorityScore, &scoresSource,
 		&modelTier, &item.Labels, &oneWayDoor,
+		&item.StageTemplate, &currentStage, &item.StageIndex,
 		&discoveryJSON,
 		&source, &metadataJSON, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if currentStage.Valid {
+		item.CurrentStage = currentStage.String
 	}
 
 	applyBacklogNullables(item, description, domain, assignedTo, effortEstimate,
@@ -52,6 +59,7 @@ func scanBacklogItems(rows pgx.Rows) ([]*BacklogItem, error) {
 		item := &BacklogItem{}
 		var description, domain, assignedTo, effortEstimate sql.NullString
 		var scoresSource, modelTier, source sql.NullString
+		var currentStage sql.NullString
 		var impact, urgency, priorityScore sql.NullFloat64
 		var estimatedTokens sql.NullInt64
 		var oneWayDoor sql.NullBool
@@ -63,10 +71,15 @@ func scanBacklogItems(rows pgx.Rows) ([]*BacklogItem, error) {
 			&impact, &urgency, &estimatedTokens, &effortEstimate,
 			&priorityScore, &scoresSource,
 			&modelTier, &item.Labels, &oneWayDoor,
+			&item.StageTemplate, &currentStage, &item.StageIndex,
 			&discoveryJSON,
 			&source, &metadataJSON, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+
+		if currentStage.Valid {
+			item.CurrentStage = currentStage.String
 		}
 
 		applyBacklogNullables(item, description, domain, assignedTo, effortEstimate,
@@ -139,14 +152,16 @@ func (s *PostgresStore) CreateBacklogItem(ctx context.Context, item *BacklogItem
 			impact, urgency, estimated_tokens, effort_estimate,
 			priority_score, scores_source,
 			model_tier, labels, one_way_door,
+			stage_template, current_stage, stage_index,
 			discovery_assessment, source, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, created_at, updated_at`,
 		item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
 		item.Impact, item.Urgency, item.EstimatedTokens, nullString(item.EffortEstimate),
 		item.PriorityScore, nullString(item.ScoresSource),
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
+		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
 		discoveryJSON, nullString(item.Source), metadataJSON,
 	).Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt)
 }
@@ -226,13 +241,15 @@ func (s *PostgresStore) UpdateBacklogItem(ctx context.Context, item *BacklogItem
 			impact = $9, urgency = $10, estimated_tokens = $11, effort_estimate = $12,
 			priority_score = $13, scores_source = $14,
 			model_tier = $15, labels = $16, one_way_door = $17,
-			discovery_assessment = $18, source = $19, metadata = $20
+			stage_template = $18, current_stage = $19, stage_index = $20,
+			discovery_assessment = $21, source = $22, metadata = $23
 		WHERE id = $1`,
 		item.ID, item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
 		item.Impact, item.Urgency, item.EstimatedTokens, nullString(item.EffortEstimate),
 		item.PriorityScore, nullString(item.ScoresSource),
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
+		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
 		discoveryJSON, nullString(item.Source), metadataJSON,
 	)
 	return err
@@ -496,13 +513,15 @@ func (s *PostgresStore) BacklogDiscoveryComplete(ctx context.Context, itemID uui
 			impact = $9, urgency = $10, estimated_tokens = $11, effort_estimate = $12,
 			priority_score = $13, scores_source = $14,
 			model_tier = $15, labels = $16, one_way_door = $17,
-			discovery_assessment = $18, source = $19, metadata = $20
+			stage_template = $18, current_stage = $19, stage_index = $20,
+			discovery_assessment = $21, source = $22, metadata = $23
 		WHERE id = $1`,
 		item.ID, item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
 		item.Impact, item.Urgency, item.EstimatedTokens, nullString(item.EffortEstimate),
 		item.PriorityScore, nullString(item.ScoresSource),
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
+		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
 		discoveryJSON, nullString(item.Source), metadataJSON,
 	)
 	if err != nil {
@@ -547,14 +566,16 @@ func (s *PostgresStore) BacklogDiscoveryComplete(ctx context.Context, itemID uui
 				impact, urgency, estimated_tokens, effort_estimate,
 				priority_score, scores_source,
 				model_tier, labels, one_way_door,
+				stage_template, current_stage, stage_index,
 				discovery_assessment, source, metadata)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 			RETURNING id, created_at, updated_at`,
 			subtask.Title, nullString(subtask.Description), subtask.ItemType, subtask.Status,
 			nullString(subtask.Domain), nullString(subtask.AssignedTo), subtask.ParentID,
 			subtask.Impact, subtask.Urgency, subtask.EstimatedTokens, nullString(subtask.EffortEstimate),
 			subtask.PriorityScore, nullString(subtask.ScoresSource),
 			nullString(subtask.ModelTier), subtask.Labels, subtask.OneWayDoor,
+			subtask.StageTemplate, nullString(subtask.CurrentStage), subtask.StageIndex,
 			subDiscoveryJSON, nullString(subtask.Source), subMetadataJSON,
 		).Scan(&subtask.ID, &subtask.CreatedAt, &subtask.UpdatedAt)
 		if err != nil {
@@ -581,4 +602,102 @@ func (s *PostgresStore) hasUnresolvedBlockersTx(ctx context.Context, tx pgx.Tx, 
 		WHERE blocked_id = $1 AND resolved_at IS NULL`, itemID,
 	).Scan(&count)
 	return count > 0, err
+}
+
+// --- Stage Engine ---
+
+func (s *PostgresStore) InitStages(ctx context.Context, itemID uuid.UUID, template []string) error {
+	currentStage := ""
+	if len(template) > 0 {
+		currentStage = template[0]
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE backlog_items SET stage_template = $2, current_stage = $3, stage_index = 0
+		WHERE id = $1`,
+		itemID, template, nullString(currentStage),
+	)
+	return err
+}
+
+func (s *PostgresStore) GetCurrentStage(ctx context.Context, itemID uuid.UUID) (string, int, error) {
+	var currentStage sql.NullString
+	var stageIndex int
+	err := s.pool.QueryRow(ctx, `
+		SELECT current_stage, stage_index FROM backlog_items WHERE id = $1`, itemID,
+	).Scan(&currentStage, &stageIndex)
+	if err != nil {
+		return "", 0, err
+	}
+	return currentStage.String, stageIndex, nil
+}
+
+func (s *PostgresStore) CreateGateCriteria(ctx context.Context, itemID uuid.UUID, stage string, criteria []string) error {
+	for _, c := range criteria {
+		_, err := s.pool.Exec(ctx, `
+			INSERT INTO stage_gates (backlog_item_id, stage, criterion)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (backlog_item_id, stage, criterion) DO NOTHING`,
+			itemID, stage, c,
+		)
+		if err != nil {
+			return fmt.Errorf("create gate criterion %q: %w", c, err)
+		}
+	}
+	return nil
+}
+
+func (s *PostgresStore) SatisfyCriterion(ctx context.Context, itemID uuid.UUID, stage, criterion, satisfiedBy string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stage_gates SET satisfied = true, satisfied_at = NOW(), satisfied_by = $4
+		WHERE backlog_item_id = $1 AND stage = $2 AND criterion ILIKE '%' || $3 || '%' AND NOT satisfied`,
+		itemID, stage, criterion, nullString(satisfiedBy),
+	)
+	return err
+}
+
+func (s *PostgresStore) SatisfyAllCriteria(ctx context.Context, itemID uuid.UUID, stage, satisfiedBy string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stage_gates SET satisfied = true, satisfied_at = NOW(), satisfied_by = $3
+		WHERE backlog_item_id = $1 AND stage = $2 AND NOT satisfied`,
+		itemID, stage, nullString(satisfiedBy),
+	)
+	return err
+}
+
+func (s *PostgresStore) GetGateStatus(ctx context.Context, itemID uuid.UUID, stage string) ([]GateCriterion, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT criterion, satisfied, satisfied_at, satisfied_by
+		FROM stage_gates
+		WHERE backlog_item_id = $1 AND stage = $2
+		ORDER BY created_at ASC`, itemID, stage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var criteria []GateCriterion
+	for rows.Next() {
+		var gc GateCriterion
+		var satisfiedBy sql.NullString
+		if err := rows.Scan(&gc.Criterion, &gc.Satisfied, &gc.SatisfiedAt, &satisfiedBy); err != nil {
+			return nil, err
+		}
+		if satisfiedBy.Valid {
+			gc.SatisfiedBy = satisfiedBy.String
+		}
+		criteria = append(criteria, gc)
+	}
+	return criteria, rows.Err()
+}
+
+func (s *PostgresStore) AllCriteriaMet(ctx context.Context, itemID uuid.UUID, stage string) (bool, error) {
+	var unmet int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM stage_gates
+		WHERE backlog_item_id = $1 AND stage = $2 AND NOT satisfied`, itemID, stage,
+	).Scan(&unmet)
+	if err != nil {
+		return false, err
+	}
+	return unmet == 0, nil
 }

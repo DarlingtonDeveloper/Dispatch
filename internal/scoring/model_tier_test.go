@@ -212,7 +212,7 @@ func TestRuntimeForTier(t *testing.T) {
 		{"economy", 5, "picoclaw"},
 		{"standard", 0, "picoclaw"},
 		{"standard", 1, "picoclaw"},
-		{"standard", 2, "openclaw"},
+		{"standard", 2, "picoclaw"},
 		{"premium", 0, "openclaw"},
 		{"premium", 1, "openclaw"},
 		{"unknown", 0, "openclaw"},
