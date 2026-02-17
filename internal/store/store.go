@@ -182,6 +182,10 @@ type BacklogItem struct {
 	// Discovery
 	DiscoveryAssessment map[string]interface{} `json:"discovery_assessment,omitempty"`
 
+	// PR / CI integration
+	PRURL      string `json:"pr_url,omitempty"`
+	BranchName string `json:"branch_name,omitempty"`
+
 	// Metadata
 	Source    string                 `json:"source,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`

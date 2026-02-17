@@ -16,12 +16,13 @@ const backlogItemColumns = `id, title, description, item_type, status, domain, a
 	model_tier, labels, one_way_door,
 	stage_template, current_stage, stage_index,
 	discovery_assessment,
-	source, metadata, created_at, updated_at`
+	source, metadata, pr_url, branch_name, created_at, updated_at`
 
 func scanBacklogItem(row pgx.Row) (*BacklogItem, error) {
 	item := &BacklogItem{}
 	var description, domain, assignedTo, effortEstimate sql.NullString
 	var scoresSource, modelTier, source sql.NullString
+	var prURL, branchName sql.NullString
 	var currentStage sql.NullString
 	var impact, urgency, priorityScore sql.NullFloat64
 	var estimatedTokens sql.NullInt64
@@ -36,7 +37,7 @@ func scanBacklogItem(row pgx.Row) (*BacklogItem, error) {
 		&modelTier, &item.Labels, &oneWayDoor,
 		&item.StageTemplate, &currentStage, &item.StageIndex,
 		&discoveryJSON,
-		&source, &metadataJSON, &item.CreatedAt, &item.UpdatedAt,
+		&source, &metadataJSON, &prURL, &branchName, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -50,6 +51,12 @@ func scanBacklogItem(row pgx.Row) (*BacklogItem, error) {
 		scoresSource, modelTier, source,
 		impact, urgency, priorityScore, estimatedTokens,
 		oneWayDoor, discoveryJSON, metadataJSON)
+	if prURL.Valid {
+		item.PRURL = prURL.String
+	}
+	if branchName.Valid {
+		item.BranchName = branchName.String
+	}
 	return item, nil
 }
 
@@ -59,6 +66,7 @@ func scanBacklogItems(rows pgx.Rows) ([]*BacklogItem, error) {
 		item := &BacklogItem{}
 		var description, domain, assignedTo, effortEstimate sql.NullString
 		var scoresSource, modelTier, source sql.NullString
+		var prURL, branchName sql.NullString
 		var currentStage sql.NullString
 		var impact, urgency, priorityScore sql.NullFloat64
 		var estimatedTokens sql.NullInt64
@@ -73,7 +81,7 @@ func scanBacklogItems(rows pgx.Rows) ([]*BacklogItem, error) {
 			&modelTier, &item.Labels, &oneWayDoor,
 			&item.StageTemplate, &currentStage, &item.StageIndex,
 			&discoveryJSON,
-			&source, &metadataJSON, &item.CreatedAt, &item.UpdatedAt,
+			&source, &metadataJSON, &prURL, &branchName, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -153,8 +161,8 @@ func (s *PostgresStore) CreateBacklogItem(ctx context.Context, item *BacklogItem
 			priority_score, scores_source,
 			model_tier, labels, one_way_door,
 			stage_template, current_stage, stage_index,
-			discovery_assessment, source, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			discovery_assessment, source, metadata, pr_url, branch_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		RETURNING id, created_at, updated_at`,
 		item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
@@ -162,7 +170,7 @@ func (s *PostgresStore) CreateBacklogItem(ctx context.Context, item *BacklogItem
 		item.PriorityScore, nullString(item.ScoresSource),
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
 		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
-		discoveryJSON, nullString(item.Source), metadataJSON,
+		discoveryJSON, nullString(item.Source), metadataJSON, nullString(item.PRURL), nullString(item.BranchName),
 	).Scan(&item.ID, &item.CreatedAt, &item.UpdatedAt)
 }
 
@@ -242,7 +250,8 @@ func (s *PostgresStore) UpdateBacklogItem(ctx context.Context, item *BacklogItem
 			priority_score = $13, scores_source = $14,
 			model_tier = $15, labels = $16, one_way_door = $17,
 			stage_template = $18, current_stage = $19, stage_index = $20,
-			discovery_assessment = $21, source = $22, metadata = $23
+			discovery_assessment = $21, source = $22, metadata = $23,
+			pr_url = $24, branch_name = $25
 		WHERE id = $1`,
 		item.ID, item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
@@ -251,6 +260,7 @@ func (s *PostgresStore) UpdateBacklogItem(ctx context.Context, item *BacklogItem
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
 		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
 		discoveryJSON, nullString(item.Source), metadataJSON,
+		nullString(item.PRURL), nullString(item.BranchName),
 	)
 	return err
 }
@@ -514,7 +524,8 @@ func (s *PostgresStore) BacklogDiscoveryComplete(ctx context.Context, itemID uui
 			priority_score = $13, scores_source = $14,
 			model_tier = $15, labels = $16, one_way_door = $17,
 			stage_template = $18, current_stage = $19, stage_index = $20,
-			discovery_assessment = $21, source = $22, metadata = $23
+			discovery_assessment = $21, source = $22, metadata = $23,
+			pr_url = $24, branch_name = $25
 		WHERE id = $1`,
 		item.ID, item.Title, nullString(item.Description), item.ItemType, item.Status,
 		nullString(item.Domain), nullString(item.AssignedTo), item.ParentID,
@@ -523,6 +534,7 @@ func (s *PostgresStore) BacklogDiscoveryComplete(ctx context.Context, itemID uui
 		nullString(item.ModelTier), item.Labels, item.OneWayDoor,
 		item.StageTemplate, nullString(item.CurrentStage), item.StageIndex,
 		discoveryJSON, nullString(item.Source), metadataJSON,
+		nullString(item.PRURL), nullString(item.BranchName),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update item: %w", err)

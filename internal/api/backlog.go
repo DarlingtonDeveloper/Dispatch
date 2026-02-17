@@ -320,6 +320,12 @@ func (h *BacklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if v, ok := patch["one_way_door"].(bool); ok {
 		item.OneWayDoor = v
 	}
+	if v, ok := patch["pr_url"].(string); ok {
+		item.PRURL = v
+	}
+	if v, ok := patch["branch_name"].(string); ok {
+		item.BranchName = v
+	}
 	if v, ok := patch["metadata"].(map[string]interface{}); ok {
 		item.Metadata = v
 	}
