@@ -142,7 +142,8 @@ func (h *StagesHandler) SubmitEvidence(w http.ResponseWriter, r *http.Request) {
 		Stage       string `json:"stage"`
 		Criterion   string `json:"criterion"`
 		Evidence    string `json:"evidence"`
-		SubmittedBy string `json:"submitted_by"`
+		SubmittedBy     string `json:"submitted_by"`
+		PromptVersionID string `json:"prompt_version_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -197,8 +198,9 @@ func (h *StagesHandler) SubmitEvidence(w http.ResponseWriter, r *http.Request) {
 			Criterion:   req.Criterion,
 			Evidence:    req.Evidence,
 			SubmittedBy: req.SubmittedBy,
-			AgentID:     req.SubmittedBy,
-			AllCriteria: criteriaSnapshot,
+			AgentID:         req.SubmittedBy,
+			AllCriteria:     criteriaSnapshot,
+			PromptVersionID: req.PromptVersionID,
 		})
 	}
 

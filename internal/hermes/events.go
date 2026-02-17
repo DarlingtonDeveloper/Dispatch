@@ -138,7 +138,8 @@ type GateEvidenceEvent struct {
 	Evidence      string                `json:"evidence"`
 	SubmittedBy   string                `json:"submitted_by"`
 	AgentID       string                `json:"agent_id"`
-	AllCriteria   []GateEvidenceCriterion `json:"all_criteria"`
+	AllCriteria      []GateEvidenceCriterion `json:"all_criteria"`
+	PromptVersionID  string                   `json:"prompt_version_id,omitempty"`
 }
 
 // GateEvidenceCriterion represents criterion status in an evidence event.
