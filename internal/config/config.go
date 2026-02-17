@@ -197,7 +197,7 @@ func Load(path string) (*Config, error) {
 			},
 			Tiers: []ModelTierDef{
 				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
-				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-6"}},
 				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
 			},
 			LearningThreshold: LearningThreshold{

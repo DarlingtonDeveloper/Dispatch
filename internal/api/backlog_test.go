@@ -281,7 +281,7 @@ func setupBacklogTestRouter() (http.Handler, *backlogMockStore) {
 			},
 			Tiers: []config.ModelTierDef{
 				{Name: "economy", Models: []string{"anthropic/claude-3-5-haiku-latest"}},
-				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-20250514"}},
+				{Name: "standard", Models: []string{"anthropic/claude-sonnet-4-6"}},
 				{Name: "premium", Models: []string{"anthropic/claude-opus-4-20250514"}},
 			},
 		},
@@ -810,7 +810,7 @@ func TestBacklogNext(t *testing.T) {
 		if item.ModelTier == "premium" && item.RecommendedModel != "anthropic/claude-opus-4-20250514" {
 			t.Errorf("expected premium tier to recommend claude-opus, got %s", item.RecommendedModel)
 		}
-		if item.ModelTier == "standard" && item.RecommendedModel != "anthropic/claude-sonnet-4-20250514" {
+		if item.ModelTier == "standard" && item.RecommendedModel != "anthropic/claude-sonnet-4-6" {
 			t.Errorf("expected standard tier to recommend claude-sonnet, got %s", item.RecommendedModel)
 		}
 	}
